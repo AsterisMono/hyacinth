@@ -141,12 +141,60 @@ func TestConfigRejectsUnknownMethod(t *testing.T) {
 
 func TestUnknownPathReturns404(t *testing.T) {
 	mux := newMux()
+	for _, path := range []string{"/no-such-route", "/some/random/path", "/notarealpath"} {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("GET %s: status = %d, want 404", path, rr.Code)
+		}
+	}
+}
+
+func TestGetIndexReturnsHTML(t *testing.T) {
+	mux := newMux()
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/no-such-route", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	mux.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	ct := rr.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("Content-Type = %q, want text/html...", ct)
+	}
+	body := rr.Body.String()
+	musts := []string{
+		"<title>Hyacinth Operator</title>",
+		`<script type="importmap">`,
+		"@material/web/",
+		"md-filled-button",
+		"md-outlined-text-field",
+		"md-slider",
+		"md-switch",
+		"md-outlined-select",
+		"--md-sys-color-primary",
+		"fetch('/config'",
+	}
+	for _, m := range musts {
+		if !strings.Contains(body, m) {
+			t.Errorf("index HTML missing %q", m)
+		}
+	}
+	// Light + dark token blocks: --md-sys-color-primary defined twice.
+	if c := strings.Count(body, "--md-sys-color-primary:"); c < 2 {
+		t.Errorf("--md-sys-color-primary defined %d times, want >= 2 (light+dark)", c)
+	}
+}
+
+func TestGetIndexHasNoStoreCache(t *testing.T) {
+	mux := newMux()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	mux.ServeHTTP(rr, req)
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
 	}
 }
 

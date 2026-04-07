@@ -219,8 +219,479 @@ func newMuxFor(srv *hyacinthServer) *http.ServeMux {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
+	mux.HandleFunc("/", srv.handleIndex)
 	return mux
 }
+
+// handleIndex serves the inlined operator UI at GET /. Because "/" is a
+// catch-all in http.ServeMux, this handler must 404 anything that isn't
+// exactly "/".
+func (s *hyacinthServer) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(indexHTML))
+}
+
+// indexHTML is the entire single-page operator UI. Material 3 styling via
+// the official @material/web ESM bundle from esm.run, plus a hand-picked
+// Hyacinth-purple Material You-style color token palette (light + dark).
+// No build step, no framework, plain fetch() + WebSocket.
+const indexHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hyacinth Operator</title>
+<script type="importmap">
+{
+  "imports": {
+    "@material/web/": "https://esm.run/@material/web/"
+  }
+}
+</script>
+<script type="module">
+  import '@material/web/all.js';
+  import {styles as typescaleStyles} from '@material/web/typography/md-typescale-styles.js';
+  document.adoptedStyleSheets.push(typescaleStyles.styleSheet);
+</script>
+<style>
+  /* Material 3 color tokens — Hyacinth purple primary (#7E57C2). */
+  :root {
+    --md-sys-color-primary: #6750A4;
+    --md-sys-color-on-primary: #FFFFFF;
+    --md-sys-color-primary-container: #EADDFF;
+    --md-sys-color-on-primary-container: #21005D;
+    --md-sys-color-secondary: #625B71;
+    --md-sys-color-on-secondary: #FFFFFF;
+    --md-sys-color-surface: #FEF7FF;
+    --md-sys-color-on-surface: #1D1B20;
+    --md-sys-color-surface-variant: #E7E0EC;
+    --md-sys-color-on-surface-variant: #49454F;
+    --md-sys-color-surface-container: #F3EDF7;
+    --md-sys-color-surface-container-high: #ECE6F0;
+    --md-sys-color-surface-container-highest: #E6E0E9;
+    --md-sys-color-outline: #79747E;
+    --md-sys-color-outline-variant: #CAC4D0;
+    --md-sys-color-error: #B3261E;
+    --md-sys-color-on-error: #FFFFFF;
+    --hy-status-good: #2E7D32;
+    --hy-status-bad:  #B3261E;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --md-sys-color-primary: #D0BCFF;
+      --md-sys-color-on-primary: #381E72;
+      --md-sys-color-primary-container: #4F378B;
+      --md-sys-color-on-primary-container: #EADDFF;
+      --md-sys-color-secondary: #CCC2DC;
+      --md-sys-color-on-secondary: #332D41;
+      --md-sys-color-surface: #141218;
+      --md-sys-color-on-surface: #E6E0E9;
+      --md-sys-color-surface-variant: #49454F;
+      --md-sys-color-on-surface-variant: #CAC4D0;
+      --md-sys-color-surface-container: #211F26;
+      --md-sys-color-surface-container-high: #2B2930;
+      --md-sys-color-surface-container-highest: #36343B;
+      --md-sys-color-outline: #938F99;
+      --md-sys-color-outline-variant: #49454F;
+      --md-sys-color-error: #F2B8B5;
+      --md-sys-color-on-error: #601410;
+      --hy-status-good: #81C784;
+      --hy-status-bad:  #F2B8B5;
+    }
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--md-sys-color-surface);
+    color: var(--md-sys-color-on-surface);
+    font-family: Roboto, system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+  }
+  main {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 4px 0 4px;
+  }
+  header .titles h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--md-sys-color-on-surface);
+  }
+  header .titles .sub {
+    font-size: 12px;
+    color: var(--md-sys-color-on-surface-variant);
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 9999px;
+    background: var(--md-sys-color-surface-container-high);
+    color: var(--md-sys-color-on-surface);
+    font-size: 12px;
+    border: 1px solid var(--md-sys-color-outline-variant);
+  }
+  .pill .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--hy-status-bad);
+  }
+  .pill.connected .dot { background: var(--hy-status-good); }
+  .card {
+    background: var(--md-sys-color-surface-container);
+    border-radius: 16px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    border: 1px solid var(--md-sys-color-outline-variant);
+  }
+  .card h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--md-sys-color-on-surface);
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .row.between { justify-content: space-between; }
+  .grow { flex: 1; }
+  md-outlined-text-field, md-outlined-select { width: 100%; }
+  md-slider { flex: 1; }
+  .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .log {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    background: var(--md-sys-color-surface-container-highest);
+    border-radius: 8px;
+    padding: 8px;
+    max-height: 160px;
+    overflow: auto;
+    color: var(--md-sys-color-on-surface-variant);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(40px);
+    background: var(--md-sys-color-surface-container-highest);
+    color: var(--md-sys-color-on-surface);
+    border: 1px solid var(--md-sys-color-outline-variant);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 14px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease, transform 200ms ease;
+    z-index: 1000;
+    max-width: calc(100vw - 32px);
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  .toast.error {
+    border-color: var(--md-sys-color-error);
+    color: var(--md-sys-color-error);
+  }
+  .stale-banner {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--md-sys-color-primary-container);
+    color: var(--md-sys-color-on-primary-container);
+    font-size: 13px;
+  }
+  .stale-banner.show { display: flex; }
+  .placeholder {
+    font-size: 13px;
+    color: var(--md-sys-color-on-surface-variant);
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="titles">
+      <h1>Hyacinth Operator</h1>
+      <div class="sub" id="server-sub"></div>
+    </div>
+    <span class="pill" id="conn-pill"><span class="dot"></span><span id="conn-text">disconnected</span></span>
+  </header>
+
+  <section class="card">
+    <h2>Current Config</h2>
+    <div id="stale-banner" class="stale-banner">
+      <span>Server changed config since you started editing.</span>
+      <md-text-button id="reload-btn">Reload</md-text-button>
+    </div>
+    <md-outlined-text-field id="content-field" label="Content URL" type="url"></md-outlined-text-field>
+    <div>
+      <div class="row between">
+        <label for="auto-switch" style="font-size:14px;">Brightness</label>
+        <div class="row">
+          <span style="font-size:12px;color:var(--md-sys-color-on-surface-variant);">Auto</span>
+          <md-switch id="auto-switch"></md-switch>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <md-slider id="brightness-slider" min="0" max="100" step="1" labeled value="50"></md-slider>
+      </div>
+    </div>
+    <md-outlined-select id="timeout-select" label="Screen Timeout">
+      <md-select-option value="always-on"><div slot="headline">Always on</div></md-select-option>
+      <md-select-option value="30s"><div slot="headline">30 seconds</div></md-select-option>
+      <md-select-option value="1m"><div slot="headline">1 minute</div></md-select-option>
+      <md-select-option value="5m"><div slot="headline">5 minutes</div></md-select-option>
+      <md-select-option value="10m"><div slot="headline">10 minutes</div></md-select-option>
+      <md-select-option value="30m"><div slot="headline">30 minutes</div></md-select-option>
+    </md-outlined-select>
+    <div class="actions">
+      <md-filled-button id="save-btn">Save</md-filled-button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Live Updates</h2>
+    <div class="row between">
+      <span style="font-size:13px;color:var(--md-sys-color-on-surface-variant);" id="ws-status">disconnected</span>
+      <span style="font-size:11px;color:var(--md-sys-color-on-surface-variant);" id="ws-retry"></span>
+    </div>
+    <div class="log" id="log">(no events yet)</div>
+  </section>
+
+  <section class="card">
+    <h2>Resource Packs</h2>
+    <md-list>
+      <md-list-item disabled>
+        <div slot="headline">Coming in M5</div>
+        <div slot="supporting-text">Pack upload, listing, and selection arrive in a later milestone.</div>
+      </md-list-item>
+    </md-list>
+  </section>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script type="module">
+  // ----- DOM handles -----
+  const $ = (id) => document.getElementById(id);
+  const contentField = $('content-field');
+  const autoSwitch   = $('auto-switch');
+  const slider       = $('brightness-slider');
+  const timeoutSel   = $('timeout-select');
+  const saveBtn      = $('save-btn');
+  const connPill     = $('conn-pill');
+  const connText     = $('conn-text');
+  const wsStatus     = $('ws-status');
+  const wsRetry      = $('ws-retry');
+  const logEl        = $('log');
+  const toastEl      = $('toast');
+  const staleBanner  = $('stale-banner');
+  const reloadBtn    = $('reload-btn');
+
+  $('server-sub').textContent = location.host;
+
+  // ----- State -----
+  let dirty = false;        // user has edited the form since last load
+  let lastServerCfg = null; // most recent config_update payload
+  let recentEvents = [];    // last 5 envelopes for the log
+  let backoffMs = 1000;
+  const BACKOFF_CAP = 10000;
+
+  // ----- Form helpers -----
+  function applyConfigToForm(cfg) {
+    contentField.value = cfg.content || '';
+    const b = cfg.brightness;
+    if (b === 'auto' || b === '"auto"') {
+      autoSwitch.selected = true;
+      slider.disabled = true;
+    } else {
+      autoSwitch.selected = false;
+      slider.disabled = false;
+      const n = typeof b === 'number' ? b : parseInt(b, 10);
+      if (!Number.isNaN(n)) slider.value = n;
+    }
+    timeoutSel.value = (typeof cfg.screenTimeout === 'string')
+      ? cfg.screenTimeout
+      : 'always-on';
+    dirty = false;
+    staleBanner.classList.remove('show');
+  }
+
+  function buildPayload() {
+    const brightness = autoSwitch.selected ? 'auto' : Number(slider.value);
+    return {
+      content: contentField.value,
+      brightness,
+      screenTimeout: timeoutSel.value || 'always-on',
+    };
+  }
+
+  function markDirty() { dirty = true; }
+  contentField.addEventListener('input', markDirty);
+  slider.addEventListener('input', markDirty);
+  autoSwitch.addEventListener('change', () => {
+    slider.disabled = autoSwitch.selected;
+    markDirty();
+  });
+  timeoutSel.addEventListener('change', markDirty);
+
+  // ----- Toast -----
+  let toastTimer = null;
+  function toast(msg, isError) {
+    toastEl.textContent = msg;
+    toastEl.classList.toggle('error', !!isError);
+    toastEl.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
+  }
+
+  // ----- Save -----
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    try {
+      const r = await fetch('/config', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(buildPayload()),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const stored = await r.json();
+      lastServerCfg = stored;
+      applyConfigToForm(stored); // resets dirty
+      toast('Saved');
+    } catch (e) {
+      toast('Save failed: ' + e.message, true);
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+
+  // ----- Initial GET /config -----
+  async function loadInitial() {
+    try {
+      const r = await fetch('/config');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const cfg = await r.json();
+      lastServerCfg = cfg;
+      applyConfigToForm(cfg);
+    } catch (e) {
+      toast('Failed to load config: ' + e.message, true);
+    }
+  }
+
+  // ----- WebSocket with reconnect -----
+  let ws = null;
+  function setConn(connected, retrying) {
+    if (connected) {
+      connPill.classList.add('connected');
+      connText.textContent = 'connected';
+      wsStatus.textContent = 'connected';
+      wsRetry.textContent = '';
+    } else {
+      connPill.classList.remove('connected');
+      connText.textContent = 'disconnected';
+      wsStatus.textContent = 'disconnected';
+      wsRetry.textContent = retrying ? '(retrying...)' : '';
+    }
+  }
+
+  function pushLog(env) {
+    recentEvents.unshift(env);
+    if (recentEvents.length > 5) recentEvents.length = 5;
+    logEl.textContent = recentEvents
+      .map((e) => JSON.stringify(e).slice(0, 240))
+      .join('\n');
+  }
+
+  function connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = proto + '//' + location.host + '/ws';
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      scheduleReconnect();
+      return;
+    }
+    ws.addEventListener('open', () => {
+      backoffMs = 1000;
+      setConn(true, false);
+    });
+    ws.addEventListener('close', () => {
+      setConn(false, true);
+      scheduleReconnect();
+    });
+    ws.addEventListener('error', () => { /* close handler will fire */ });
+    ws.addEventListener('message', (ev) => {
+      let env;
+      try { env = JSON.parse(ev.data); } catch { return; }
+      pushLog(env);
+      if (env.type === 'config_update' && env.config) {
+        lastServerCfg = env.config;
+        if (!dirty) {
+          applyConfigToForm(env.config);
+        } else {
+          staleBanner.classList.add('show');
+        }
+      }
+    });
+  }
+
+  function scheduleReconnect() {
+    setTimeout(() => {
+      backoffMs = Math.min(BACKOFF_CAP, backoffMs * 2);
+      connectWS();
+    }, backoffMs);
+  }
+
+  reloadBtn.addEventListener('click', () => {
+    if (lastServerCfg) applyConfigToForm(lastServerCfg);
+  });
+
+  // ----- Boot -----
+  loadInitial().then(connectWS);
+</script>
+</body>
+</html>
+`
 
 func main() {
 	log.Printf("hyacinth server listening on %s", listenAddr)
