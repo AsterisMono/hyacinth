@@ -1,20 +1,24 @@
 package main
 
-// Resource pack endpoints (M5: image-only).
+// Resource pack endpoints (M5: images, M6: zip with manifest).
 //
 // On-disk layout under <dataDir>/packs/:
 //
 //   index.json                # array of latest manifests, one entry per id
 //   <id>/<version>/manifest.json
-//   <id>/<version>/content/image.<ext>
+//   <id>/<version>/content/image.<ext>             # image pack
+//   <id>/<version>/content/index.html              # zip pack: extracted tree
+//   <id>/<version>/content/<other files...>
+//   <id>/<version>/source.zip                       # zip pack: original upload
 //
-// Versioning is per-pack monotonic int. Atomic writes use tmp+rename.
-// All mutations are serialized by hyacinthServer.packsMu.
-//
-// M6 will extend this with zip packs (POST currently rejects type=zip with
-// 501).
+// Versioning is per-pack monotonic int. Atomic writes use tmp+rename for
+// individual files, and the zip extraction pipeline writes everything into
+// a sibling `<version>.staging/` directory which is then renamed atomically
+// to `<version>/`. All mutations are serialized by hyacinthServer.packsMu.
 
 import (
+	"archive/zip"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -23,6 +27,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -43,8 +48,19 @@ type PackManifest struct {
 	CreatedAt string `json:"createdAt"`
 }
 
-// maxPackBodyBytes caps multipart upload size. 50 MiB matches the prompt.
+// maxPackBodyBytes caps multipart upload size. Image packs cap at 50 MiB
+// per the prompt; zip packs are allowed to be larger on the wire because
+// the *uncompressed* total is what we really care about. We still cap zip
+// uploads at maxZipBodyBytes to keep memory bounded.
 const maxPackBodyBytes = 50 << 20
+
+// Zip-pack defenses (server-side validation, mirrored on client).
+const (
+	maxZipBodyBytes      = 60 << 20  // raw upload cap for zip body itself
+	maxZipUncompressed   = 200 << 20 // total uncompressed size cap
+	maxZipEntryUncompr   = 50 << 20  // single-entry uncompressed cap
+	maxZipEntries        = 5000      // sanity cap on entry count
+)
 
 // versionsToKeep is the rollback retention; M5 keeps the last two versions
 // of each pack on disk so a bad upload can be rolled back manually.
@@ -68,10 +84,28 @@ var (
 	}
 )
 
-// validPackType returns true if `t` is one of the M5-allowed image types.
-func validPackType(t string) bool {
+// validImagePackType returns true if `t` is one of the allowed image types.
+func validImagePackType(t string) bool {
 	_, ok := allowedImageExt[t]
 	return ok
+}
+
+// validPackType returns true for any allowed pack type (image or zip).
+func validPackType(t string) bool {
+	return t == "zip" || validImagePackType(t)
+}
+
+// sourcePath returns the on-disk path of the original uploaded bytes for
+// the given manifest. Image packs ARE the source (content/image.<ext>),
+// so they reuse their content file. Zip packs store the raw upload at
+// `<version>/source.zip` so it can be re-served verbatim from
+// /packs/<id>/download.
+func sourcePath(packDir string, m PackManifest) string {
+	versionDir := filepath.Join(packDir, strconv.Itoa(m.Version))
+	if m.Type == "zip" {
+		return filepath.Join(versionDir, "source.zip")
+	}
+	return filepath.Join(versionDir, "content", m.Filename)
 }
 
 // validPackID returns true if id is a safe slug.
@@ -335,10 +369,10 @@ func (s *hyacinthServer) handleDownloadPack(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	pd, _ := s.packDir(id)
-	contentPath := filepath.Join(pd, strconv.Itoa(m.Version), "content", m.Filename)
+	srcPath := sourcePath(pd, m)
 	s.packsMu.Unlock()
 
-	f, err := os.Open(contentPath)
+	f, err := os.Open(srcPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			http.NotFound(w, r)
@@ -356,7 +390,11 @@ func (s *hyacinthServer) handleDownloadPack(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Type", mimeForType(m.Type))
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	w.Header().Set("ETag", `"`+m.SHA256+`"`)
-	http.ServeContent(w, r, m.Filename, stat.ModTime(), f)
+	servedName := m.Filename
+	if m.Type == "zip" {
+		servedName = id + ".zip"
+	}
+	http.ServeContent(w, r, servedName, stat.ModTime(), f)
 }
 
 func (s *hyacinthServer) handleDeletePack(w http.ResponseWriter, _ *http.Request, id string) {
@@ -395,13 +433,10 @@ func (s *hyacinthServer) handleDeletePack(w http.ResponseWriter, _ *http.Request
 
 func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request) {
 	// Cap the request body BEFORE touching multipart parsing so an oversize
-	// upload bails out early. The body cap is enforced both here and by
-	// ParseMultipartForm's own internal limit.
-	r.Body = http.MaxBytesReader(w, r.Body, maxPackBodyBytes)
-	if err := r.ParseMultipartForm(maxPackBodyBytes); err != nil {
-		// MaxBytesReader / ParseMultipartForm signal oversize via a
-		// generic error; map any parse failure that's plausibly an
-		// oversize-body case to 413, otherwise 400.
+	// upload bails out early. We use the larger of the two caps here so the
+	// type-specific check below can still emit a precise error.
+	r.Body = http.MaxBytesReader(w, r.Body, maxZipBodyBytes)
+	if err := r.ParseMultipartForm(maxZipBodyBytes); err != nil {
 		if strings.Contains(err.Error(), "request body too large") {
 			http.Error(w, "pack too large", http.StatusRequestEntityTooLarge)
 			return
@@ -417,12 +452,8 @@ func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request
 		http.Error(w, "invalid pack id (slug ^[a-z0-9][a-z0-9-]{0,31}$)", http.StatusBadRequest)
 		return
 	}
-	if packType == "zip" {
-		http.Error(w, "zip packs land in M6", http.StatusNotImplemented)
-		return
-	}
 	if !validPackType(packType) {
-		http.Error(w, "invalid pack type (allowed: png, jpg, webp, gif)", http.StatusBadRequest)
+		http.Error(w, "invalid pack type (allowed: png, jpg, webp, gif, zip)", http.StatusBadRequest)
 		return
 	}
 
@@ -436,6 +467,18 @@ func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request
 		http.Error(w, "empty file", http.StatusBadRequest)
 		return
 	}
+
+	mh := &multipartHeader{Filename: header.Filename, Size: header.Size}
+	if packType == "zip" {
+		s.uploadZipPack(w, r, id, file, mh)
+		return
+	}
+	s.uploadImagePack(w, r, id, packType, file, mh)
+}
+
+// uploadImagePack is the M5 image-only path, factored out so the dispatch
+// in handleUploadPack stays trivial.
+func (s *hyacinthServer) uploadImagePack(w http.ResponseWriter, _ *http.Request, id, packType string, file io.Reader, header *multipartHeader) {
 	if header.Size > maxPackBodyBytes {
 		http.Error(w, "pack too large", http.StatusRequestEntityTooLarge)
 		return
@@ -453,9 +496,6 @@ func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Read into memory (capped at 50 MiB) so we can both sha256 and write
-	// the file in one pass. For an image-only path this is fine; M6's zip
-	// pipeline will stream straight to disk.
 	buf, err := io.ReadAll(file)
 	if err != nil {
 		http.Error(w, "read upload: "+err.Error(), http.StatusBadRequest)
@@ -465,8 +505,6 @@ func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request
 		http.Error(w, "short read", http.StatusBadRequest)
 		return
 	}
-	// Content sniff: must be image/*. http.DetectContentType only needs
-	// the first 512 bytes.
 	sniff := http.DetectContentType(buf)
 	if !strings.HasPrefix(sniff, "image/") {
 		http.Error(w, "uploaded bytes are not an image (sniffed: "+sniff+")", http.StatusBadRequest)
@@ -484,14 +522,10 @@ func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	existing, err := listVersionsDesc(pd)
+	nextVersion, err := s.nextVersionLocked(pd)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-	nextVersion := 1
-	if len(existing) > 0 {
-		nextVersion = existing[0] + 1
 	}
 
 	storedFilename := "image." + allowedImageExt[packType]
@@ -516,18 +550,113 @@ func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request
 		Size:      int64(len(buf)),
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
+	if err := s.writeManifestAndIndex(w, pd, versionDir, manifest); err != nil {
+		return // writeManifestAndIndex already wrote the error response
+	}
+	s.pruneOldVersionsLocked(pd)
+}
+
+// uploadZipPack handles type=zip uploads: validation, extraction into a
+// staging dir, atomic rename to the version dir, sha256 over the raw zip
+// bytes, manifest write, and index upsert.
+func (s *hyacinthServer) uploadZipPack(w http.ResponseWriter, _ *http.Request, id string, file io.Reader, header *multipartHeader) {
+	if header.Size > maxZipBodyBytes {
+		http.Error(w, "pack too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	buf, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, "read upload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if int64(len(buf)) != header.Size {
+		http.Error(w, "short read", http.StatusBadRequest)
+		return
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(buf), int64(len(buf)))
+	if err != nil {
+		http.Error(w, "invalid zip: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := validateZipEntries(zr); err != nil {
+		http.Error(w, "zip validation: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	sum := sha256.Sum256(buf)
+	hash := hex.EncodeToString(sum[:])
+
+	s.packsMu.Lock()
+	defer s.packsMu.Unlock()
+
+	pd, err := s.packDir(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	manifestPath := filepath.Join(versionDir, "manifest.json")
-	if err := atomicWriteFile(manifestPath, manifestBytes); err != nil {
+	nextVersion, err := s.nextVersionLocked(pd)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Update the index with the new latest manifest for this id.
+	versionDir := filepath.Join(pd, strconv.Itoa(nextVersion))
+	stagingDir := versionDir + ".staging"
+	// Wipe any leftover staging from a previous crash.
+	_ = os.RemoveAll(stagingDir)
+	contentDir := filepath.Join(stagingDir, "content")
+	if err := os.MkdirAll(contentDir, 0o755); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Extract every entry into the staging content dir. validateZipEntries
+	// already verified entry names are safe and capped sizes.
+	if err := extractZipTo(zr, contentDir); err != nil {
+		_ = os.RemoveAll(stagingDir)
+		http.Error(w, "zip extract: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Save the original zip alongside the extracted tree so /download can
+	// re-serve it byte-for-byte.
+	if err := os.WriteFile(filepath.Join(stagingDir, "source.zip"), buf, 0o644); err != nil {
+		_ = os.RemoveAll(stagingDir)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	manifest := PackManifest{
+		ID:        id,
+		Version:   nextVersion,
+		Type:      "zip",
+		Filename:  "index.html",
+		SHA256:    hash,
+		Size:      int64(len(buf)),
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		_ = os.RemoveAll(stagingDir)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(stagingDir, "manifest.json"), manifestBytes, 0o644); err != nil {
+		_ = os.RemoveAll(stagingDir)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Atomic flip: rename the entire staging dir to the final version dir.
+	if err := os.Rename(stagingDir, versionDir); err != nil {
+		_ = os.RemoveAll(stagingDir)
+		http.Error(w, "atomic rename: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Index update.
 	entries, err := s.readIndex()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -538,19 +667,178 @@ func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	// Rollback retention: keep the last `versionsToKeep` versions on disk
-	// per pack. Re-list versions (now includes the freshly written one)
-	// and prune anything older than the keep window.
-	allVersions, _ := listVersionsDesc(pd)
-	if len(allVersions) > versionsToKeep {
-		for _, v := range allVersions[versionsToKeep:] {
-			_ = os.RemoveAll(filepath.Join(pd, strconv.Itoa(v)))
-		}
-	}
+	s.pruneOldVersionsLocked(pd)
 
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(manifestBytes)
+}
+
+// nextVersionLocked computes the next monotonic version. Caller holds packsMu.
+func (s *hyacinthServer) nextVersionLocked(packDir string) (int, error) {
+	existing, err := listVersionsDesc(packDir)
+	if err != nil {
+		return 0, err
+	}
+	if len(existing) == 0 {
+		return 1, nil
+	}
+	return existing[0] + 1, nil
+}
+
+// writeManifestAndIndex writes manifest.json under versionDir and upserts
+// the index entry. On any error it writes an HTTP error response and
+// returns the same error so the caller can early-return. Image-pack only.
+func (s *hyacinthServer) writeManifestAndIndex(w http.ResponseWriter, _ /*packDir*/, versionDir string, manifest PackManifest) error {
+	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return err
+	}
+	manifestPath := filepath.Join(versionDir, "manifest.json")
+	if err := atomicWriteFile(manifestPath, manifestBytes); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return err
+	}
+	entries, err := s.readIndex()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return err
+	}
+	entries = upsertIndexEntry(entries, manifest)
+	if err := s.writeIndex(entries); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(manifestBytes)
+	return nil
+}
+
+// pruneOldVersionsLocked enforces the rollback-retention window. Caller
+// holds packsMu.
+func (s *hyacinthServer) pruneOldVersionsLocked(packDir string) {
+	allVersions, _ := listVersionsDesc(packDir)
+	if len(allVersions) > versionsToKeep {
+		for _, v := range allVersions[versionsToKeep:] {
+			_ = os.RemoveAll(filepath.Join(packDir, strconv.Itoa(v)))
+		}
+	}
+}
+
+// multipartHeader is a tiny shim around *multipart.FileHeader so the
+// per-type upload helpers don't have to import the multipart package
+// directly. We only need Filename and Size.
+type multipartHeader struct {
+	Filename string
+	Size     int64
+}
+
+// validateZipEntries enforces the path-traversal, zip-bomb, and
+// entry-count defenses. Returns nil iff the archive is acceptable.
+func validateZipEntries(zr *zip.Reader) error {
+	if len(zr.File) == 0 {
+		return errors.New("empty archive")
+	}
+	if len(zr.File) > maxZipEntries {
+		return fmt.Errorf("too many entries (%d > %d)", len(zr.File), maxZipEntries)
+	}
+	var total uint64
+	hasIndex := false
+	for _, f := range zr.File {
+		name := f.Name
+		if name == "" {
+			return errors.New("entry with empty name")
+		}
+		if !isSafeRelPath(name) {
+			return fmt.Errorf("unsafe entry name %q", name)
+		}
+		if f.UncompressedSize64 > uint64(maxZipEntryUncompr) {
+			return fmt.Errorf("entry %q exceeds %d bytes", name, maxZipEntryUncompr)
+		}
+		total += f.UncompressedSize64
+		if total > uint64(maxZipUncompressed) {
+			return fmt.Errorf("uncompressed total exceeds %d bytes", maxZipUncompressed)
+		}
+		// "index.html at archive root" — case-insensitive, top level only.
+		if !f.FileInfo().IsDir() && strings.EqualFold(name, "index.html") {
+			hasIndex = true
+		}
+	}
+	if !hasIndex {
+		return errors.New("missing index.html at archive root")
+	}
+	return nil
+}
+
+// isSafeRelPath rejects entry names that could escape the extraction root
+// or contain control characters. Mirrored on the client.
+func isSafeRelPath(name string) bool {
+	if name == "" {
+		return false
+	}
+	if strings.ContainsAny(name, "\\\x00") {
+		return false
+	}
+	if strings.HasPrefix(name, "/") {
+		return false
+	}
+	// Reject any segment equal to ".." (covers "../x", "a/../b", etc).
+	cleaned := path.Clean(name)
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return false
+	}
+	for _, seg := range strings.Split(name, "/") {
+		if seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// extractZipTo writes every file entry in zr into destDir, creating
+// parent directories as needed. Directory entries are skipped (parents
+// are created implicitly). Caller must already have validated entry
+// names and sizes via validateZipEntries.
+func extractZipTo(zr *zip.Reader, destDir string) error {
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		outPath := filepath.Join(destDir, filepath.FromSlash(f.Name))
+		// Defense in depth: confirm the resolved path is still inside destDir.
+		rel, err := filepath.Rel(destDir, outPath)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("entry %q escapes destination", f.Name)
+		}
+		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+			return err
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		// Cap per-entry copy at maxZipEntryUncompr — defends against a
+		// liar header that under-reports UncompressedSize64.
+		out, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		if err != nil {
+			rc.Close()
+			return err
+		}
+		_, err = io.CopyN(out, rc, int64(maxZipEntryUncompr)+1)
+		if err != nil && !errors.Is(err, io.EOF) {
+			out.Close()
+			rc.Close()
+			return err
+		}
+		// If we wrote more than the cap, the header lied — abort.
+		stat, _ := out.Stat()
+		out.Close()
+		rc.Close()
+		if stat != nil && stat.Size() > int64(maxZipEntryUncompr) {
+			return fmt.Errorf("entry %q exceeds %d bytes", f.Name, maxZipEntryUncompr)
+		}
+	}
+	return nil
 }
 
 // mimeForType returns the canonical Content-Type for an image pack type.
@@ -564,6 +852,8 @@ func mimeForType(t string) string {
 		return "image/webp"
 	case "gif":
 		return "image/gif"
+	case "zip":
+		return "application/zip"
 	}
 	return "application/octet-stream"
 }

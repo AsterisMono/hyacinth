@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 import 'pack_cache.dart';
 import 'pack_manifest.dart';
 import 'wifi_guard.dart';
+import 'zip_validation.dart';
 
 /// Thrown when [PackManager.ensure] cannot satisfy the request because the
 /// pack is not in cache and the device is not on Wi-Fi (or any other
@@ -29,6 +31,17 @@ class PackChecksumMismatch implements Exception {
   @override
   String toString() =>
       'PackChecksumMismatch: expected $expected, got $actual';
+}
+
+/// Thrown when a downloaded zip pack fails client-side validation
+/// (missing index.html at the root, path traversal, oversized entry,
+/// too many entries, or zip-bomb total). The staging directory is wiped
+/// and the active `current` pointer is left untouched.
+class PackArchiveInvalid implements Exception {
+  PackArchiveInvalid(this.message);
+  final String message;
+  @override
+  String toString() => 'PackArchiveInvalid: $message';
 }
 
 /// Orchestrates "make sure pack `<id>` is locally available at the latest
@@ -92,20 +105,32 @@ class PackManager {
       // and re-download.
     }
 
-    // Stream the bytes to a staging file, hashing as we go.
+    if (remote.isZip) {
+      await _downloadAndStageZip(packId, remote);
+    } else {
+      await _downloadAndStageImage(packId, remote);
+    }
+    await cache.swapCurrent(packId, remote.version);
+    // Best-effort GC; don't fail the ensure() call if cleanup misbehaves.
+    try {
+      await cache.gc(packId);
+    } catch (_) {}
+    return remote;
+  }
+
+  /// M5 image flow: stream the download into a single file under the
+  /// final version dir, sha256 it, write the manifest. The cache layout
+  /// for images is `<version>/content/<filename>` (single file).
+  Future<void> _downloadAndStageImage(
+    String packId,
+    PackManifest remote,
+  ) async {
     final staging = await cache.stagingFile(
       packId,
       remote.version,
       remote.filename,
     );
-    final downloadUri = Uri.parse('$_baseUrl/packs/$packId/download');
-    final req = http.Request('GET', downloadUri);
-    final resp = await _http.send(req);
-    if (resp.statusCode != 200) {
-      throw PackUnavailable(
-        'Download HTTP ${resp.statusCode} for "$packId"',
-      );
-    }
+    final resp = await _getDownload(packId);
     final sink = staging.openWrite();
     final hasher = _StreamingSha256();
     try {
@@ -119,7 +144,6 @@ class PackManager {
     }
     final actualHash = hasher.hexDigest();
     if (actualHash != remote.sha256) {
-      // Don't pollute the cache. Best-effort cleanup of the staged file.
       try {
         await staging.delete();
       } catch (_) {}
@@ -129,12 +153,117 @@ class PackManager {
       );
     }
     await cache.writeManifest(packId, remote.version, remote);
-    await cache.swapCurrent(packId, remote.version);
-    // Best-effort GC; don't fail the ensure() call if cleanup misbehaves.
+  }
+
+  /// M6 zip flow:
+  ///   1. Stream the zip body into `<version>.staging/source.zip`.
+  ///   2. Verify sha256 against the manifest.
+  ///   3. Validate the archive (index.html at root, no traversal,
+  ///      size caps, entry count cap).
+  ///   4. Extract every entry into `<version>.staging/content/<rel>`.
+  ///   5. Write `<version>.staging/manifest.json`.
+  ///   6. Atomically rename `<version>.staging` → `<version>`.
+  Future<void> _downloadAndStageZip(
+    String packId,
+    PackManifest remote,
+  ) async {
+    final stagingDir = await cache.stagingVersionDir(packId, remote.version);
+    // Wipe any leftover staging from a previous crash.
+    if (await stagingDir.exists()) {
+      await stagingDir.delete(recursive: true);
+    }
+    await stagingDir.create(recursive: true);
+
+    final sourceFile = File('${stagingDir.path}/source.zip');
+    final resp = await _getDownload(packId);
+    final sink = sourceFile.openWrite();
+    final hasher = _StreamingSha256();
     try {
-      await cache.gc(packId);
-    } catch (_) {}
-    return remote;
+      await for (final chunk in resp.stream) {
+        sink.add(chunk);
+        hasher.add(chunk);
+      }
+      await sink.flush();
+    } finally {
+      await sink.close();
+    }
+    final actualHash = hasher.hexDigest();
+    if (actualHash != remote.sha256) {
+      try {
+        await stagingDir.delete(recursive: true);
+      } catch (_) {}
+      throw PackChecksumMismatch(
+        expected: remote.sha256,
+        actual: actualHash,
+      );
+    }
+
+    // Read the zip body back into memory and decode. Capped via the
+    // server-side maxZipBodyBytes (60 MiB) so this is bounded. We can
+    // safely use ZipDecoder.decodeBytes here.
+    final bytes = await sourceFile.readAsBytes();
+    final Archive archive;
+    try {
+      archive = ZipDecoder().decodeBytes(bytes, verify: true);
+    } catch (e) {
+      try {
+        await stagingDir.delete(recursive: true);
+      } catch (_) {}
+      throw PackArchiveInvalid('zip decode failed: $e');
+    }
+
+    final validationErr = validateArchive(archive);
+    if (validationErr != null) {
+      try {
+        await stagingDir.delete(recursive: true);
+      } catch (_) {}
+      throw PackArchiveInvalid(validationErr);
+    }
+
+    // Extract.
+    final contentDir = Directory('${stagingDir.path}/content');
+    await contentDir.create(recursive: true);
+    for (final f in archive) {
+      if (!f.isFile) continue;
+      // Extra defense (validateArchive already checked names).
+      if (!isSafeRelPath(f.name)) {
+        try {
+          await stagingDir.delete(recursive: true);
+        } catch (_) {}
+        throw PackArchiveInvalid('unsafe entry name "${f.name}"');
+      }
+      final outFile = File('${contentDir.path}/${f.name}');
+      await outFile.parent.create(recursive: true);
+      final data = f.content as List<int>;
+      await outFile.writeAsBytes(data, flush: true);
+    }
+
+    // Write manifest into the staging dir so the atomic rename brings it
+    // along with everything else.
+    final manifestFile = File('${stagingDir.path}/manifest.json');
+    await manifestFile.writeAsString(jsonEncode(remote.toJson()), flush: true);
+
+    // Final flip: rename staging dir to the real version dir. POSIX
+    // rename of a directory onto a non-existing target is atomic.
+    final finalDir = await cache.versionDir(packId, remote.version);
+    if (await finalDir.exists()) {
+      // Belt-and-braces: an unexpected leftover at the target would
+      // make rename fail on most filesystems. Clear it.
+      await finalDir.delete(recursive: true);
+    }
+    await stagingDir.rename(finalDir.path);
+  }
+
+  Future<http.StreamedResponse> _getDownload(String packId) async {
+    final downloadUri = Uri.parse('$_baseUrl/packs/$packId/download');
+    final req = http.Request('GET', downloadUri);
+    final resp = await _http.send(req);
+    if (resp.statusCode != 200) {
+      throw PackUnavailable(
+        'Download HTTP ${resp.statusCode} for "$packId"',
+      );
+    }
+    return resp;
   }
 
   Future<PackManifest> _fetchManifest(String packId) async {

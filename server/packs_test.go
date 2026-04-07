@@ -5,10 +5,12 @@ package main
 // network or external state.
 
 import (
+	"archive/zip"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -122,15 +124,258 @@ func TestPostPackImageHappyPath(t *testing.T) {
 	}
 }
 
-func TestPostPackZipReturns501(t *testing.T) {
-	_, mux := newPacksTestServer(t)
-	body, ct := makePackUpload(t, "anything", "zip", "x.zip", []byte("PK\x03\x04zipbody"))
+// makeZip builds a zip in memory from name->bytes pairs. Used by all the
+// M6 zip tests.
+func makeZip(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	// Iterate in a stable order so test failures are deterministic.
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
+	}
+	// no sort.Strings to keep deps minimal — order doesn't matter for tests.
+	for _, n := range names {
+		fw, err := zw.Create(n)
+		if err != nil {
+			t.Fatalf("zip create %q: %v", n, err)
+		}
+		if _, err := fw.Write(files[n]); err != nil {
+			t.Fatalf("zip write %q: %v", n, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestPostPackZipHappyPath(t *testing.T) {
+	srv, mux := newPacksTestServer(t)
+	zipBytes := makeZip(t, map[string][]byte{
+		"index.html": []byte("<html><body>hi</body></html>"),
+		"style.css":  []byte("body{color:red}"),
+	})
+	body, ct := makePackUpload(t, "site", "zip", "site.zip", zipBytes)
 	req := httptest.NewRequest(http.MethodPost, "/packs", body)
 	req.Header.Set("Content-Type", ct)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
-	if rr.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501; body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got PackManifest
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Type != "zip" || got.Filename != "index.html" || got.Version != 1 {
+		t.Errorf("manifest = %+v", got)
+	}
+	want := sha256.Sum256(zipBytes)
+	if got.SHA256 != hex.EncodeToString(want[:]) {
+		t.Errorf("sha256 mismatch: got %s", got.SHA256)
+	}
+	if got.Size != int64(len(zipBytes)) {
+		t.Errorf("size = %d want %d", got.Size, len(zipBytes))
+	}
+	base := filepath.Join(srv.dataDir, "packs", "site", "1")
+	for _, p := range []string{
+		filepath.Join(base, "manifest.json"),
+		filepath.Join(base, "source.zip"),
+		filepath.Join(base, "content", "index.html"),
+		filepath.Join(base, "content", "style.css"),
+	} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("expected %s: %v", p, err)
+		}
+	}
+	// staging dir must NOT linger
+	if _, err := os.Stat(base + ".staging"); !os.IsNotExist(err) {
+		t.Errorf("staging dir still exists: %v", err)
+	}
+	idx, _ := srv.readIndex()
+	if len(idx) != 1 || idx[0].ID != "site" || idx[0].Type != "zip" {
+		t.Errorf("index = %+v", idx)
+	}
+}
+
+func TestPostPackZipMissingIndexHtml(t *testing.T) {
+	_, mux := newPacksTestServer(t)
+	zipBytes := makeZip(t, map[string][]byte{
+		"main.js": []byte("console.log(1)"),
+	})
+	body, ct := makePackUpload(t, "noidx", "zip", "x.zip", zipBytes)
+	req := httptest.NewRequest(http.MethodPost, "/packs", body)
+	req.Header.Set("Content-Type", ct)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestPostPackZipPathTraversal(t *testing.T) {
+	_, mux := newPacksTestServer(t)
+	// Build a zip whose first entry tries to escape the extraction root.
+	// We MUST include index.html so the only failure path is the
+	// traversal check, not the missing-index check.
+	for _, evilName := range []string{
+		"../evil.txt",
+		"a/../../escape.txt",
+		"/abs.txt",
+		"sub\\back.txt",
+	} {
+		zb := makeZip(t, map[string][]byte{
+			"index.html": []byte("ok"),
+			evilName:     []byte("bad"),
+		})
+		body, ct := makePackUpload(t, "trav", "zip", "x.zip", zb)
+		req := httptest.NewRequest(http.MethodPost, "/packs", body)
+		req.Header.Set("Content-Type", ct)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("name=%q status=%d body=%s", evilName, rr.Code, rr.Body.String())
+		}
+	}
+}
+
+func TestPostPackZipOversizedEntry(t *testing.T) {
+	_, mux := newPacksTestServer(t)
+	// 51 MiB of zeros — compresses very well so the zip itself stays small
+	// (well under maxZipBodyBytes), but the uncompressed entry trips the
+	// per-entry cap.
+	huge := make([]byte, (51 << 20))
+	zb := makeZip(t, map[string][]byte{
+		"index.html": []byte("ok"),
+		"big.bin":    huge,
+	})
+	body, ct := makePackUpload(t, "huge", "zip", "x.zip", zb)
+	req := httptest.NewRequest(http.MethodPost, "/packs", body)
+	req.Header.Set("Content-Type", ct)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestPostPackZipBomb(t *testing.T) {
+	_, mux := newPacksTestServer(t)
+	// 5 entries × 45 MiB each = 225 MiB uncompressed, each entry is under
+	// the per-entry 50 MiB cap so the only trip-wire is the total cap.
+	files := map[string][]byte{"index.html": []byte("ok")}
+	for i := 0; i < 5; i++ {
+		files[fmt.Sprintf("blob-%d.bin", i)] = make([]byte, 45<<20)
+	}
+	zb := makeZip(t, files)
+	body, ct := makePackUpload(t, "bomb", "zip", "x.zip", zb)
+	req := httptest.NewRequest(http.MethodPost, "/packs", body)
+	req.Header.Set("Content-Type", ct)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestPostPackZipTooManyEntries(t *testing.T) {
+	_, mux := newPacksTestServer(t)
+	files := map[string][]byte{"index.html": []byte("ok")}
+	for i := 0; i < maxZipEntries+5; i++ {
+		files[fmt.Sprintf("f%05d.txt", i)] = []byte("x")
+	}
+	zb := makeZip(t, files)
+	body, ct := makePackUpload(t, "many", "zip", "x.zip", zb)
+	req := httptest.NewRequest(http.MethodPost, "/packs", body)
+	req.Header.Set("Content-Type", ct)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestGetPackDownloadServesZipBytes(t *testing.T) {
+	_, mux := newPacksTestServer(t)
+	zb := makeZip(t, map[string][]byte{
+		"index.html": []byte("<html>hi</html>"),
+	})
+	body, ct := makePackUpload(t, "zd", "zip", "z.zip", zb)
+	req := httptest.NewRequest(http.MethodPost, "/packs", body)
+	req.Header.Set("Content-Type", ct)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("upload status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/packs/zd/download", nil)
+	rr2 := httptest.NewRecorder()
+	mux.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("download status=%d", rr2.Code)
+	}
+	if cct := rr2.Header().Get("Content-Type"); !strings.HasPrefix(cct, "application/zip") {
+		t.Errorf("content-type = %q, want application/zip prefix", cct)
+	}
+	got, _ := io.ReadAll(rr2.Body)
+	if !bytes.Equal(got, zb) {
+		t.Errorf("download bytes mismatch: got %d want %d", len(got), len(zb))
+	}
+}
+
+func TestPostPackZipBumpsVersion(t *testing.T) {
+	srv, mux := newPacksTestServer(t)
+	doPost := func(payload []byte) PackManifest {
+		body, ct := makePackUpload(t, "zv", "zip", "x.zip", payload)
+		req := httptest.NewRequest(http.MethodPost, "/packs", body)
+		req.Header.Set("Content-Type", ct)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("upload status=%d body=%s", rr.Code, rr.Body.String())
+		}
+		var m PackManifest
+		_ = json.Unmarshal(rr.Body.Bytes(), &m)
+		return m
+	}
+	z1 := makeZip(t, map[string][]byte{"index.html": []byte("v1")})
+	z2 := makeZip(t, map[string][]byte{"index.html": []byte("v2-different")})
+	m1 := doPost(z1)
+	m2 := doPost(z2)
+	if m1.Version != 1 || m2.Version != 2 {
+		t.Errorf("versions = %d, %d", m1.Version, m2.Version)
+	}
+	for _, v := range []string{"1", "2"} {
+		p := filepath.Join(srv.dataDir, "packs", "zv", v, "content", "index.html")
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("missing %s: %v", p, err)
+		}
+	}
+}
+
+func TestDeletePackZipRemovesFiles(t *testing.T) {
+	srv, mux := newPacksTestServer(t)
+	zb := makeZip(t, map[string][]byte{"index.html": []byte("hi")})
+	body, ct := makePackUpload(t, "zdel", "zip", "x.zip", zb)
+	req := httptest.NewRequest(http.MethodPost, "/packs", body)
+	req.Header.Set("Content-Type", ct)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("upload status=%d", rr.Code)
+	}
+	req2 := httptest.NewRequest(http.MethodDelete, "/packs/zdel", nil)
+	rr2 := httptest.NewRecorder()
+	mux.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusNoContent {
+		t.Fatalf("delete status=%d", rr2.Code)
+	}
+	pd := filepath.Join(srv.dataDir, "packs", "zdel")
+	if _, err := os.Stat(pd); !os.IsNotExist(err) {
+		t.Errorf("pack dir still exists: %v", err)
 	}
 }
 

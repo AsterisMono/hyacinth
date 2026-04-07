@@ -78,4 +78,62 @@ void main() {
     expect(guessAppSchemeMime('a.gif'), 'image/gif');
     expect(guessAppSchemeMime('mystery.bin'), 'application/octet-stream');
   });
+
+  test('guessAppSchemeMime maps zip-pack types', () {
+    expect(guessAppSchemeMime('index.html'), 'text/html');
+    expect(guessAppSchemeMime('assets/app.css'), 'text/css');
+    expect(guessAppSchemeMime('assets/app.js'), 'application/javascript');
+    expect(guessAppSchemeMime('app.mjs'), 'application/javascript');
+    expect(guessAppSchemeMime('data.json'), 'application/json');
+    expect(guessAppSchemeMime('icon.svg'), 'image/svg+xml');
+    expect(guessAppSchemeMime('favicon.ico'), 'image/x-icon');
+    expect(guessAppSchemeMime('font.woff2'), 'font/woff2');
+    expect(guessAppSchemeMime('font.woff'), 'font/woff');
+    expect(guessAppSchemeMime('font.ttf'), 'font/ttf');
+    expect(guessAppSchemeMime('font.otf'), 'font/otf');
+    expect(guessAppSchemeMime('clip.mp4'), 'video/mp4');
+    expect(guessAppSchemeMime('clip.webm'), 'video/webm');
+    expect(guessAppSchemeMime('readme.txt'), 'text/plain');
+  });
+
+  test('resolves a nested zip-pack file', () async {
+    // Lay down a "site" pack with a nested asset.
+    final root = await cache.root();
+    final base = '${root.path}/site/1/content';
+    await Directory('$base/assets').create(recursive: true);
+    await File('$base/index.html').writeAsString('<html>hi</html>');
+    await File('$base/assets/app.js').writeAsString('let x=1;');
+    await cache.swapCurrent('site', 1);
+
+    final idx = await resolveAppScheme(
+      _req('app-scheme://pack/site/index.html'),
+      cache,
+    );
+    expect(idx, isNotNull);
+    expect(idx!.contentType, 'text/html');
+
+    final js = await resolveAppScheme(
+      _req('app-scheme://pack/site/assets/app.js'),
+      cache,
+    );
+    expect(js, isNotNull);
+    expect(js!.contentType, 'application/javascript');
+    expect(String.fromCharCodes(js.data), 'let x=1;');
+  });
+
+  test('returns null for unsafe nested rel path', () async {
+    final r = await resolveAppScheme(
+      _req('app-scheme://pack/neko/..%2Fevil.txt'),
+      cache,
+    );
+    expect(r, isNull);
+  });
+
+  test('returns null when only the pack id is given (no file)', () async {
+    final r = await resolveAppScheme(
+      _req('app-scheme://pack/neko'),
+      cache,
+    );
+    expect(r, isNull);
+  });
 }

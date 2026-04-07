@@ -539,9 +539,10 @@ const indexHTML = `<!DOCTYPE html>
         <md-select-option value="jpg"><div slot="headline">jpg</div></md-select-option>
         <md-select-option value="webp"><div slot="headline">webp</div></md-select-option>
         <md-select-option value="gif"><div slot="headline">gif</div></md-select-option>
+        <md-select-option value="zip"><div slot="headline">zip</div></md-select-option>
       </md-outlined-select>
     </div>
-    <input type="file" id="pack-file" accept="image/png,image/jpeg,image/webp,image/gif" />
+    <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif" />
     <div class="actions">
       <md-filled-button id="pack-upload-btn">Upload</md-filled-button>
     </div>
@@ -746,7 +747,10 @@ const indexHTML = `<!DOCTYPE html>
   }
 
   function packSchemeUrl(p) {
-    return 'app-scheme://pack/' + p.id + '/' + p.filename;
+    // Zip packs always have an index.html entry point at the archive
+    // root; image packs serve their single content file by name.
+    const path = p.type === 'zip' ? 'index.html' : p.filename;
+    return 'app-scheme://pack/' + p.id + '/' + path;
   }
 
   async function loadPackList() {

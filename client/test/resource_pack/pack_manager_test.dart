@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -169,6 +170,127 @@ void main() {
       mgr.ensure('neko'),
       throwsA(isA<PackUnavailable>()),
     );
+  });
+
+  // ---- Zip flow ------------------------------------------------------
+
+  List<int> buildZip(Map<String, List<int>> files) {
+    final a = Archive();
+    files.forEach((name, bytes) {
+      a.addFile(ArchiveFile.bytes(name, bytes));
+    });
+    final out = ZipEncoder().encode(a);
+    return out;
+  }
+
+  PackManifest zipManifest({
+    String id = 'site',
+    int version = 1,
+    required List<int> bytes,
+  }) {
+    return PackManifest(
+      id: id,
+      version: version,
+      type: 'zip',
+      filename: 'index.html',
+      sha256: sha256.convert(bytes).toString(),
+      size: bytes.length,
+      createdAt: '2026-04-07T10:00:00Z',
+    );
+  }
+
+  test('Zip + Wi-Fi + cold cache: downloads, validates, extracts, swaps',
+      () async {
+    final zb = buildZip({
+      'index.html': 'hi'.codeUnits,
+      'assets/app.js': 'let x=1;'.codeUnits,
+    });
+    final m = zipManifest(bytes: zb);
+    final mgr = PackManager(
+      serverBaseUrl: 'http://server',
+      cache: cache,
+      wifiGuard: _FakeWifi(true),
+      httpClient: _serverClient(manifest: m, bytes: zb),
+    );
+    final got = await mgr.ensure('site');
+    expect(got, m);
+    expect(await cache.currentVersion('site'), 1);
+    final idx = await cache.currentContentFileByPath('site', 'index.html');
+    expect(idx, isNotNull);
+    expect(await idx!.readAsString(), 'hi');
+    final js = await cache.currentContentFileByPath('site', 'assets/app.js');
+    expect(js, isNotNull);
+    expect(await js!.readAsString(), 'let x=1;');
+    // Staging dir must NOT linger.
+    final staging = await cache.stagingVersionDir('site', 1);
+    expect(await staging.exists(), isFalse);
+  });
+
+  test('Zip + missing index.html: throws PackArchiveInvalid, no swap',
+      () async {
+    final zb = buildZip({'main.js': 'x'.codeUnits});
+    final m = zipManifest(bytes: zb);
+    final mgr = PackManager(
+      serverBaseUrl: 'http://server',
+      cache: cache,
+      wifiGuard: _FakeWifi(true),
+      httpClient: _serverClient(manifest: m, bytes: zb),
+    );
+    await expectLater(
+      mgr.ensure('site'),
+      throwsA(isA<PackArchiveInvalid>()),
+    );
+    expect(await cache.currentVersion('site'), isNull);
+    final staging = await cache.stagingVersionDir('site', 1);
+    expect(await staging.exists(), isFalse);
+  });
+
+  test('Zip + path traversal: throws PackArchiveInvalid, no swap', () async {
+    final zb = buildZip({
+      'index.html': 'ok'.codeUnits,
+      '../evil.txt': 'bad'.codeUnits,
+    });
+    final m = zipManifest(bytes: zb);
+    final mgr = PackManager(
+      serverBaseUrl: 'http://server',
+      cache: cache,
+      wifiGuard: _FakeWifi(true),
+      httpClient: _serverClient(manifest: m, bytes: zb),
+    );
+    await expectLater(
+      mgr.ensure('site'),
+      throwsA(isA<PackArchiveInvalid>()),
+    );
+    expect(await cache.currentVersion('site'), isNull);
+  });
+
+  test('Zip + sha mismatch: throws PackChecksumMismatch, no swap',
+      () async {
+    final zb = buildZip({'index.html': 'ok'.codeUnits});
+    // Lying manifest claims a wrong sha.
+    final m = PackManifest(
+      id: 'site',
+      version: 1,
+      type: 'zip',
+      filename: 'index.html',
+      sha256: '0' * 64,
+      size: zb.length,
+      createdAt: 't',
+    );
+    final mgr = PackManager(
+      serverBaseUrl: 'http://server',
+      cache: cache,
+      wifiGuard: _FakeWifi(true),
+      httpClient: _serverClient(manifest: m, bytes: zb),
+    );
+    await expectLater(
+      mgr.ensure('site'),
+      throwsA(isA<PackChecksumMismatch>()),
+    );
+    expect(await cache.currentVersion('site'), isNull);
+    final staging = await cache.stagingVersionDir('site', 1);
+    expect(await staging.exists(), isFalse,
+        reason: 'staging must be cleaned up on sha mismatch');
   });
 
   test('Wi-Fi + sha mismatch: throws PackChecksumMismatch, no swap',

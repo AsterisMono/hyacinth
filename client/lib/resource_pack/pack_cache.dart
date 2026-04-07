@@ -6,6 +6,20 @@ import 'package:path_provider/path_provider.dart';
 
 import 'pack_manifest.dart';
 
+/// Mirrors the server's `isSafeRelPath`. Rejects relative paths that
+/// could escape a pack's `content/` directory or that contain control
+/// characters. Used both by [PackCache.currentContentFileByPath] and by
+/// the zip extractor in `pack_manager.dart`.
+bool isSafeRelPath(String relPath) {
+  if (relPath.isEmpty) return false;
+  if (relPath.contains('\\') || relPath.contains('\x00')) return false;
+  if (relPath.startsWith('/')) return false;
+  for (final seg in relPath.split('/')) {
+    if (seg == '..') return false;
+  }
+  return true;
+}
+
 /// On-disk pack cache. Layout under [root]:
 ///
 /// ```
@@ -65,15 +79,29 @@ class PackCache {
     return int.tryParse(raw);
   }
 
-  /// Returns the active content file for [packId] / [filename], or `null`
-  /// if no current version exists or the file is missing.
-  Future<File?> currentContentFile(String packId, String filename) async {
+  /// Returns the active content file at the given relative path under
+  /// the pack's `content/` dir, or `null` if no current version exists,
+  /// the file is missing, or [relPath] is unsafe (contains `..`, leading
+  /// `/`, backslash, or null byte).
+  ///
+  /// For image packs the relative path is the bare filename
+  /// (e.g. `image.png`). For zip packs it can include nested directories
+  /// (e.g. `assets/index-abc.js`).
+  Future<File?> currentContentFileByPath(String packId, String relPath) async {
+    if (!isSafeRelPath(relPath)) return null;
     final v = await currentVersion(packId);
     if (v == null) return null;
     final dir = await _packDir(packId);
-    final f = File('${dir.path}/$v/content/$filename');
+    final f = File('${dir.path}/$v/content/$relPath');
     if (!await f.exists()) return null;
     return f;
+  }
+
+  /// Convenience wrapper retained for the M5 single-file (image) call
+  /// sites. Equivalent to [currentContentFileByPath] with [filename] as
+  /// the relative path.
+  Future<File?> currentContentFile(String packId, String filename) {
+    return currentContentFileByPath(packId, filename);
   }
 
   /// Returns the manifest file for the active version of [packId], or
@@ -99,6 +127,24 @@ class PackCache {
       await contentDir.create(recursive: true);
     }
     return File('${contentDir.path}/$filename');
+  }
+
+  /// Returns the canonical version directory `<packDir>/<version>` for
+  /// the given pack. Used by the zip pipeline to compute the rename
+  /// target. Does NOT create the directory.
+  Future<Directory> versionDir(String packId, int version) async {
+    final dir = await _packDir(packId);
+    return Directory('${dir.path}/$version');
+  }
+
+  /// Returns the staging directory `<packDir>/<version>.staging` for
+  /// the given pack. Used by the zip pipeline so the entire freshly-
+  /// downloaded tree can be flipped into place via a single
+  /// directory-rename. Does NOT create the directory — callers are
+  /// expected to wipe + create as needed.
+  Future<Directory> stagingVersionDir(String packId, int version) async {
+    final dir = await _packDir(packId);
+    return Directory('${dir.path}/$version.staging');
   }
 
   /// Persists [m] as the manifest.json for [packId]/[version]. Atomic

@@ -32,6 +32,10 @@ class PackManifest {
   final int size;
   final String createdAt;
 
+  /// True for zip-archive packs (Vite builds with index.html at the
+  /// archive root). Image packs return false.
+  bool get isZip => type == 'zip';
+
   factory PackManifest.fromJson(Map<String, dynamic> json) {
     return PackManifest(
       id: json['id'] as String? ?? '',

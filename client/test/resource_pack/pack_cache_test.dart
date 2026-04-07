@@ -84,6 +84,50 @@ void main() {
     expect(survivors, equals({4, 5}));
   });
 
+  test('currentContentFileByPath resolves nested paths', () async {
+    // Lay out a fake "zip pack" by writing files at nested paths.
+    final root = await cache.root();
+    final base = '${root.path}/site/3/content';
+    await Directory('$base/assets').create(recursive: true);
+    await File('$base/index.html').writeAsString('<html></html>');
+    await File('$base/assets/app.js').writeAsString('console.log(1)');
+    await cache.swapCurrent('site', 3);
+
+    final idx = await cache.currentContentFileByPath('site', 'index.html');
+    expect(idx, isNotNull);
+    expect(await idx!.readAsString(), '<html></html>');
+
+    final js = await cache.currentContentFileByPath('site', 'assets/app.js');
+    expect(js, isNotNull);
+    expect(await js!.readAsString(), 'console.log(1)');
+  });
+
+  test('currentContentFileByPath rejects unsafe relative paths', () async {
+    // Even a populated pack must reject traversal attempts.
+    final f = await cache.stagingFile('p2', 1, 'index.html');
+    await f.writeAsString('ok');
+    await cache.swapCurrent('p2', 1);
+
+    expect(await cache.currentContentFileByPath('p2', '../../etc/passwd'),
+        isNull);
+    expect(await cache.currentContentFileByPath('p2', '/abs.txt'), isNull);
+    expect(await cache.currentContentFileByPath('p2', 'a\\b.txt'), isNull);
+    expect(await cache.currentContentFileByPath('p2', ''), isNull);
+    expect(await cache.currentContentFileByPath('p2', 'sub/../etc'), isNull);
+  });
+
+  test('isSafeRelPath unit', () {
+    expect(isSafeRelPath('index.html'), isTrue);
+    expect(isSafeRelPath('assets/app.js'), isTrue);
+    expect(isSafeRelPath('a/b/c/d.txt'), isTrue);
+    expect(isSafeRelPath(''), isFalse);
+    expect(isSafeRelPath('../etc'), isFalse);
+    expect(isSafeRelPath('a/../b'), isFalse);
+    expect(isSafeRelPath('/abs'), isFalse);
+    expect(isSafeRelPath('sub\\back'), isFalse);
+    expect(isSafeRelPath('null\x00byte'), isFalse);
+  });
+
   test('gc retains the active version even if outside the keep window',
       () async {
     for (int v = 1; v <= 4; v++) {
