@@ -35,3 +35,7 @@ apk-debug:
 # Install the debug APK on a connected device
 install: apk-debug
     cd client && flutter install
+
+# Install the release APK on a connected device via adb
+apk-install: apk
+    adb install -r client/build/app/outputs/flutter-apk/app-release.apk
