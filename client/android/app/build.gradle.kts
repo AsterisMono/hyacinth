@@ -35,6 +35,17 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+
+            // R8 strips io.flutter.util.PathUtils (and other reflectively-
+            // accessed Flutter embedding classes), causing path_provider to
+            // crash at runtime. Keep minification off; if you ever re-enable
+            // it, proguard-rules.pro has the canonical Flutter keep list.
+            isMinifyEnabled = false
+            isShrinkResources = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
