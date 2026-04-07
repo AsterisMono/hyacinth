@@ -6,6 +6,21 @@ import 'config/config_model.dart';
 import 'config/config_store.dart';
 import 'fallback/health_check.dart';
 import 'net/config_client.dart';
+import 'net/ws_client.dart';
+
+/// Signature for a function that builds a [WsClient] given a base URL and
+/// the callback to invoke on every `config_update`. Injectable so unit
+/// tests can substitute a fake client without opening a socket.
+typedef WsClientFactory = WsClient Function(
+  String baseUrl,
+  void Function(HyacinthConfig) onConfigUpdate,
+);
+
+WsClient _defaultWsClientFactory(
+  String baseUrl,
+  void Function(HyacinthConfig) onConfigUpdate,
+) =>
+    WsClient(baseUrl: baseUrl, onConfigUpdate: onConfigUpdate);
 
 /// High-level lifecycle phases the app can be in.
 ///
@@ -26,16 +41,20 @@ class AppState extends ChangeNotifier {
     ConfigStore? store,
     ConfigClient? client,
     HealthCheck? healthCheck,
+    WsClientFactory? wsClientFactory,
     Duration fallbackRetryInterval = const Duration(seconds: 10),
   })  : _store = store ?? ConfigStore(),
         _client = client ?? ConfigClient(),
         _healthCheck = healthCheck ?? HealthCheck(),
+        _wsClientFactory = wsClientFactory ?? _defaultWsClientFactory,
         _fallbackRetryInterval = fallbackRetryInterval;
 
   final ConfigStore _store;
   final ConfigClient _client;
   final HealthCheck _healthCheck;
+  final WsClientFactory _wsClientFactory;
   final Duration _fallbackRetryInterval;
+  WsClient? _wsClient;
 
   AppPhase _phase = AppPhase.booting;
   HyacinthConfig? _config;
@@ -130,6 +149,7 @@ class AppState extends ChangeNotifier {
       _config = cfg;
       _error = null;
       _cancelFallbackTimer();
+      _openWsClient(serverUrl);
       _setPhase(AppPhase.displaying);
     } catch (e) {
       _error = '$e';
@@ -155,14 +175,51 @@ class AppState extends ChangeNotifier {
   }
 
   void _setPhase(AppPhase phase) {
+    final leavingDisplaying =
+        _phase == AppPhase.displaying && phase != AppPhase.displaying;
     _phase = phase;
+    if (leavingDisplaying) {
+      _closeWsClient();
+    }
     if (!_disposed) notifyListeners();
   }
+
+  void _openWsClient(String baseUrl) {
+    _closeWsClient();
+    final ws = _wsClientFactory(baseUrl, _applyConfig);
+    _wsClient = ws;
+    ws.connect();
+  }
+
+  void _closeWsClient() {
+    _wsClient?.disconnect();
+    _wsClient = null;
+  }
+
+  /// Diff guard for live config pushes. If the incoming config is value-
+  /// equal to the current one we drop the update silently — no notify, no
+  /// rebuild. Otherwise we swap and notify; the DisplayPage's own reload
+  /// guard then decides whether to remount the WebView.
+  ///
+  /// Crucial M3 invariant: brightness/timeout-only changes still notify
+  /// listeners (state DID change), but the new HyacinthConfig keeps the
+  /// same `content`/`contentRevision`, so the WebView reload guard sees
+  /// no reason to rebuild and the playing video doesn't flicker.
+  void _applyConfig(HyacinthConfig next) {
+    if (_phase != AppPhase.displaying) return;
+    if (_config == next) return;
+    _config = next;
+    if (!_disposed) notifyListeners();
+  }
+
+  /// Test seam: drive the diff guard directly without an actual WS push.
+  void debugApplyConfig(HyacinthConfig next) => _applyConfig(next);
 
   @override
   void dispose() {
     _disposed = true;
     _cancelFallbackTimer();
+    _closeWsClient();
     super.dispose();
   }
 }

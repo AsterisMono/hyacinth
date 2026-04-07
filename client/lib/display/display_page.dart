@@ -12,10 +12,11 @@ import 'webview_controller.dart';
 /// re-applied when the app resumes. A wakelock keeps the screen on while
 /// this widget is mounted.
 ///
-/// This widget does NOT load config or handle bootstrap errors; the caller
-/// is expected to have a valid [HyacinthConfig] in hand before mounting it.
-/// In M1 that caller is `_M1Bootstrap` in `main.dart`; in M2 it will be
-/// `AppState` mounting `DisplayPage` only in the `Displaying` state.
+/// **Reload guard (M3)**: the inner [HyacinthWebView] is constructed once
+/// in [State.initState] and only re-created in [didUpdateWidget] when
+/// [shouldReloadWebView] returns true. Brightness/timeout-only config
+/// updates therefore rebuild the [DisplayPage] but leave the WebView's
+/// element/state untouched, so a playing video does not flicker.
 class DisplayPage extends StatefulWidget {
   const DisplayPage({
     super.key,
@@ -28,14 +29,50 @@ class DisplayPage extends StatefulWidget {
   State<DisplayPage> createState() => _DisplayPageState();
 }
 
+/// Pure predicate that decides whether the WebView must be remounted.
+///
+/// Per plan.md L73: `contentUrl + contentRevision unchanged → do nothing
+/// to WebView`. We treat ANY change in either field as a reload trigger,
+/// and brightness/timeout changes alone as no-ops.
+bool shouldReloadWebView(HyacinthConfig oldCfg, HyacinthConfig newCfg) {
+  return oldCfg.content != newCfg.content ||
+      oldCfg.contentRevision != newCfg.contentRevision;
+}
+
 class _DisplayPageState extends State<DisplayPage>
     with WidgetsBindingObserver {
+  late HyacinthWebView _webView;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _enterImmersive();
     WakelockPlus.enable();
+    _webView = HyacinthWebView(url: widget.config.content);
+  }
+
+  @override
+  void didUpdateWidget(covariant DisplayPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The reload guard. We only rebuild the inner WebView widget when
+    // content or revision actually changed. Brightness/timeout-only updates
+    // hit this branch with `shouldReloadWebView == false`, so the cached
+    // _webView is reused — Flutter sees the same widget instance, the
+    // element tree is preserved, and the underlying native WebView never
+    // sees a `loadUrl`.
+    if (shouldReloadWebView(oldWidget.config, widget.config)) {
+      _webView = HyacinthWebView(
+        // Bump the key so Flutter throws the old element away and the
+        // new InAppWebView mounts with the new URL. Without a fresh key
+        // identical-type widgets get reused and the URL change is silently
+        // dropped.
+        key: ValueKey<String>(
+          '${widget.config.content}#${widget.config.contentRevision}',
+        ),
+        url: widget.config.content,
+      );
+    }
   }
 
   @override
@@ -61,9 +98,7 @@ class _DisplayPageState extends State<DisplayPage>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: SizedBox.expand(
-        child: HyacinthWebView(url: widget.config.content),
-      ),
+      body: SizedBox.expand(child: _webView),
     );
   }
 }

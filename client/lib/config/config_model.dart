@@ -16,11 +16,38 @@ class HyacinthConfig {
   final String screenTimeout;
 
   factory HyacinthConfig.fromJson(Map<String, dynamic> json) {
+    // The server's `brightness` and `screenTimeout` are union types
+    // (`"auto"` / int / `"always-on"` / `"30s"`). M3 only needs the values
+    // round-tripped for diffing — full enforcement lands in M7 — so we
+    // collapse them to their string form here.
+    String stringify(Object? v, String fallback) {
+      if (v == null) return fallback;
+      if (v is String) return v;
+      return v.toString();
+    }
+
     return HyacinthConfig(
       content: json['content'] as String? ?? '',
       contentRevision: json['contentRevision'] as String? ?? '',
-      brightness: json['brightness'] as String? ?? 'auto',
-      screenTimeout: json['screenTimeout'] as String? ?? 'always-on',
+      brightness: stringify(json['brightness'], 'auto'),
+      screenTimeout: stringify(json['screenTimeout'], 'always-on'),
+    );
+  }
+
+  /// Returns a copy with selectively-overridden fields. Used by the M3
+  /// reload-guard tests to construct "same content, different brightness"
+  /// configs without retyping all four fields.
+  HyacinthConfig copyWith({
+    String? content,
+    String? contentRevision,
+    String? brightness,
+    String? screenTimeout,
+  }) {
+    return HyacinthConfig(
+      content: content ?? this.content,
+      contentRevision: contentRevision ?? this.contentRevision,
+      brightness: brightness ?? this.brightness,
+      screenTimeout: screenTimeout ?? this.screenTimeout,
     );
   }
 

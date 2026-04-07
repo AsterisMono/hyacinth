@@ -4,6 +4,8 @@
 // run against a HealthCheck that's been handed a fake http.Client returning
 // 200 for /health. SharedPreferences is replaced with setMockInitialValues.
 
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -12,6 +14,7 @@ import 'package:hyacinth/config/config_model.dart';
 import 'package:hyacinth/config/config_store.dart';
 import 'package:hyacinth/fallback/health_check.dart';
 import 'package:hyacinth/net/config_client.dart';
+import 'package:hyacinth/net/ws_client.dart';
 import 'package:hyacinth/permissions/perm_manager.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -60,6 +63,20 @@ class _GrantedPerms implements PermManager {
       PermissionStatus.granted;
 }
 
+/// Inert WsClient factory for tests that don't care about the WS path.
+/// Returns a WsClient backed by a never-emitting fake connection so the
+/// reconnect loop never tries to dial a real socket.
+WsClient _inertWsClient(
+  String baseUrl,
+  void Function(HyacinthConfig) onConfigUpdate,
+) {
+  return WsClient(
+    baseUrl: baseUrl,
+    channelFactory: (_) => _NeverChannel(),
+    onConfigUpdate: onConfigUpdate,
+  );
+}
+
 HealthCheck _makeHealthCheck({required bool pingOk}) {
   final mock = MockClient((request) async {
     if (request.url.path.endsWith('/health')) {
@@ -89,6 +106,7 @@ void main() {
       store: ConfigStore(),
       client: _ThrowingConfigClient(),
       healthCheck: _makeHealthCheck(pingOk: true),
+      wsClientFactory: _inertWsClient,
       fallbackRetryInterval: const Duration(hours: 1),
     );
     await state.start();
@@ -102,6 +120,7 @@ void main() {
       store: ConfigStore(),
       client: _OkConfigClient(),
       healthCheck: _makeHealthCheck(pingOk: true),
+      wsClientFactory: _inertWsClient,
       fallbackRetryInterval: const Duration(hours: 1),
     );
     await state.start();
@@ -118,6 +137,7 @@ void main() {
       store: ConfigStore(),
       client: _OkConfigClient(),
       healthCheck: _makeHealthCheck(pingOk: true),
+      wsClientFactory: _inertWsClient,
       fallbackRetryInterval: const Duration(hours: 1),
     );
     await state.start();
@@ -130,6 +150,7 @@ void main() {
       store: ConfigStore(),
       client: _OkConfigClient(),
       healthCheck: _makeHealthCheck(pingOk: false),
+      wsClientFactory: _inertWsClient,
       fallbackRetryInterval: const Duration(hours: 1),
     );
     await state.start();
@@ -143,6 +164,7 @@ void main() {
       store: ConfigStore(),
       client: _ThrowingConfigClient(),
       healthCheck: _makeHealthCheck(pingOk: true),
+      wsClientFactory: _inertWsClient,
       fallbackRetryInterval: const Duration(milliseconds: 30),
     );
     await state.start();
@@ -164,6 +186,7 @@ void main() {
       store: store,
       client: _OkConfigClient(),
       healthCheck: _makeHealthCheck(pingOk: true),
+      wsClientFactory: _inertWsClient,
       fallbackRetryInterval: const Duration(hours: 1),
     );
     await state.completeOnboarding('http://server:8080');
@@ -193,6 +216,7 @@ void main() {
       store: ConfigStore(),
       client: _OkConfigClient(),
       healthCheck: hc,
+      wsClientFactory: _inertWsClient,
       fallbackRetryInterval: const Duration(hours: 1),
     );
     await state.start();
@@ -204,4 +228,152 @@ void main() {
     expect(state.error, isNotNull);
     state.dispose();
   });
+
+  group('M3 WebSocket integration', () {
+    // Each AppState in this group is built with a WsClient factory that
+    // captures the constructed client(s) so the test can poke them.
+    late List<WsClient> created;
+    WsClientFactory makeFactory() {
+      created = <WsClient>[];
+      return (baseUrl, onConfigUpdate) {
+        // The WsClient takes a channelFactory; we hand it one that returns
+        // a stream that never emits and a sink that swallows writes. The
+        // AppState test doesn't need to drive the channel — it pokes
+        // _applyConfig directly via debugApplyConfig.
+        final ws = WsClient(
+          baseUrl: baseUrl,
+          channelFactory: (_) => _NeverChannel(),
+          onConfigUpdate: onConfigUpdate,
+        );
+        created.add(ws);
+        return ws;
+      };
+    }
+
+    test('AppState opens a WsClient on entering displaying', () async {
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: makeFactory(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.displaying);
+      expect(created, hasLength(1));
+      expect(created.single.isDisposed, isFalse);
+      state.dispose();
+    });
+
+    test('debugApplyConfig with equal config does NOT notify listeners',
+        () async {
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: makeFactory(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.displaying);
+      var fired = 0;
+      state.addListener(() => fired++);
+      // Identical to what _OkConfigClient returned.
+      state.debugApplyConfig(const HyacinthConfig(
+        content: 'https://example.com',
+        contentRevision: 'r1',
+        brightness: 'auto',
+        screenTimeout: 'always-on',
+      ));
+      expect(fired, 0,
+          reason:
+              'an equal config update must be a no-op (no rebuild upstream)');
+      state.dispose();
+    });
+
+    test(
+        'debugApplyConfig with brightness-only delta DOES notify, '
+        'but content/revision stay pinned', () async {
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: makeFactory(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      var fired = 0;
+      state.addListener(() => fired++);
+      state.debugApplyConfig(const HyacinthConfig(
+        content: 'https://example.com',
+        contentRevision: 'r1',
+        brightness: '40', // changed
+        screenTimeout: 'always-on',
+      ));
+      expect(fired, 1,
+          reason: 'a brightness change is a real state delta and must notify');
+      // The new config keeps the same content/revision so DisplayPage's
+      // reload guard will see no reason to remount the WebView. This is
+      // the M3 invariant; the actual no-rebuild assertion lives in
+      // display_page_reload_guard_test.dart.
+      expect(state.config!.content, 'https://example.com');
+      expect(state.config!.contentRevision, 'r1');
+      expect(state.config!.brightness, '40');
+      state.dispose();
+    });
+
+    test('leaving displaying via goToFallback disconnects the WsClient',
+        () async {
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: makeFactory(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.displaying);
+      final ws = created.single;
+      expect(ws.isDisposed, isFalse);
+      state.goToFallback('test reason');
+      expect(state.phase, AppPhase.fallback);
+      expect(ws.isDisposed, isTrue,
+          reason: 'WsClient must be disconnected when leaving displaying');
+      state.dispose();
+    });
+
+    test('dispose() while displaying tears down the WsClient', () async {
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: makeFactory(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      final ws = created.single;
+      state.dispose();
+      expect(ws.isDisposed, isTrue);
+    });
+  });
+}
+
+/// A `WsConnection` whose stream never emits and whose sink no-ops. Used
+/// by AppState tests that just want to verify the lifecycle wiring, not
+/// the message decoding path.
+class _NeverChannel implements WsConnection {
+  _NeverChannel() : _controller = StreamController<dynamic>();
+
+  final StreamController<dynamic> _controller;
+
+  @override
+  Stream<dynamic> get stream => _controller.stream;
+
+  @override
+  void send(String data) {}
+
+  @override
+  void close() {
+    _controller.close();
+  }
 }

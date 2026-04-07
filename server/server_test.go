@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+
+	"nhooyr.io/websocket"
 )
 
 func TestGetConfigReturnsJSON(t *testing.T) {
@@ -48,14 +53,89 @@ func TestGetHealthReturnsOK(t *testing.T) {
 	}
 }
 
-func TestPostConfigReturns405(t *testing.T) {
-	mux := newMux()
+// PUT with new content bumps the revision and returns the stored config.
+func TestPutConfigBumpsRevisionWhenContentChanges(t *testing.T) {
+	srv := newServer()
+	mux := newMuxFor(srv)
+	prevRev := srv.snapshot().ContentRevision
+
+	body := `{"content":"https://new.example.com","brightness":50,"screenTimeout":"30s"}`
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/config", nil)
+	req := httptest.NewRequest(http.MethodPut, "/config",
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	mux.ServeHTTP(rr, req)
 
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var got Config
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid response JSON: %v", err)
+	}
+	if got.Content != "https://new.example.com" {
+		t.Errorf("content = %q, want updated", got.Content)
+	}
+	if got.ContentRevision == "" {
+		t.Errorf("ContentRevision empty after content change")
+	}
+	if got.ContentRevision == prevRev {
+		t.Errorf("ContentRevision = %q unchanged after content change",
+			got.ContentRevision)
+	}
+	if string(got.Brightness) != "50" {
+		t.Errorf("Brightness = %s, want 50", string(got.Brightness))
+	}
+}
+
+// PUT that only changes brightness MUST NOT bump the content revision —
+// this is the server-side half of the M3 reload guard.
+func TestPutConfigDoesNotBumpRevisionWhenContentUnchanged(t *testing.T) {
+	srv := newServer()
+	mux := newMuxFor(srv)
+	initial := srv.snapshot()
+
+	body := `{"content":"` + initial.Content + `","brightness":42,"screenTimeout":"always-on"}`
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/config",
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var got Config
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid response JSON: %v", err)
+	}
+	if got.ContentRevision != initial.ContentRevision {
+		t.Errorf("ContentRevision = %q, want unchanged %q",
+			got.ContentRevision, initial.ContentRevision)
+	}
+	if string(got.Brightness) != "42" {
+		t.Errorf("Brightness = %s, want 42", string(got.Brightness))
+	}
+}
+
+func TestPutConfigInvalidJSON(t *testing.T) {
+	mux := newMux()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/config",
+		strings.NewReader("{not json"))
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+func TestConfigRejectsUnknownMethod(t *testing.T) {
+	mux := newMux()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/config", nil)
+	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want 405 (M3 will change this)", rr.Code)
+		t.Fatalf("status = %d, want 405", rr.Code)
 	}
 }
 
@@ -68,4 +148,112 @@ func TestUnknownPathReturns404(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rr.Code)
 	}
+}
+
+// End-to-end WS test: connect, expect the initial config_update envelope,
+// then trigger a PUT /config from the test and assert the WS client receives
+// the second config_update envelope.
+func TestWebSocketBroadcastsOnPut(t *testing.T) {
+	srv := newServer()
+	ts := httptest.NewServer(newMuxFor(srv))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("ws dial: %v", err)
+	}
+	defer c.Close(websocket.StatusNormalClosure, "test done")
+
+	// 1. Initial envelope.
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+	var env wsEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		t.Fatalf("first envelope JSON: %v", err)
+	}
+	if env.Type != "config_update" {
+		t.Errorf("first envelope type = %q, want config_update", env.Type)
+	}
+	if env.Config == nil || env.Config.Content == "" {
+		t.Errorf("first envelope config missing or empty: %+v", env)
+	}
+
+	// 2. Trigger a PUT and expect the broadcast.
+	body := `{"content":"https://broadcast.example.com","brightness":"auto","screenTimeout":"always-on"}`
+	resp, err := http.DefaultClient.Do(mustNewRequest(t,
+		http.MethodPut, ts.URL+"/config", body))
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("put status = %d", resp.StatusCode)
+	}
+
+	_, data, err = c.Read(ctx)
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if err := json.Unmarshal(data, &env); err != nil {
+		t.Fatalf("second envelope JSON: %v", err)
+	}
+	if env.Type != "config_update" {
+		t.Errorf("second envelope type = %q, want config_update", env.Type)
+	}
+	if env.Config == nil || env.Config.Content != "https://broadcast.example.com" {
+		t.Errorf("second envelope content mismatch: %+v", env.Config)
+	}
+}
+
+// `ping` envelopes get a `pong` reply.
+func TestWebSocketPingPong(t *testing.T) {
+	srv := newServer()
+	ts := httptest.NewServer(newMuxFor(srv))
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("ws dial: %v", err)
+	}
+	defer c.Close(websocket.StatusNormalClosure, "test done")
+
+	// Drain initial config_update.
+	if _, _, err := c.Read(ctx); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+
+	if err := c.Write(ctx, websocket.MessageText, []byte(`{"type":"ping"}`)); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("read pong: %v", err)
+	}
+	var env wsEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		t.Fatalf("pong JSON: %v", err)
+	}
+	if env.Type != "pong" {
+		t.Errorf("envelope type = %q, want pong", env.Type)
+	}
+}
+
+func mustNewRequest(t *testing.T, method, url, body string) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return req
 }
