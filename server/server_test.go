@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"nhooyr.io/websocket"
+	"github.com/gorilla/websocket"
 )
 
 func TestGetConfigReturnsJSON(t *testing.T) {
@@ -207,17 +206,18 @@ func TestWebSocketBroadcastsOnPut(t *testing.T) {
 	defer ts.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	deadline := time.Now().Add(5 * time.Second)
 
-	c, _, err := websocket.Dial(ctx, wsURL, nil)
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("ws dial: %v", err)
 	}
-	defer c.Close(websocket.StatusNormalClosure, "test done")
+	defer c.Close()
+	_ = c.SetReadDeadline(deadline)
+	_ = c.SetWriteDeadline(deadline)
 
 	// 1. Initial envelope.
-	_, data, err := c.Read(ctx)
+	_, data, err := c.ReadMessage()
 	if err != nil {
 		t.Fatalf("first read: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestWebSocketBroadcastsOnPut(t *testing.T) {
 		t.Fatalf("put status = %d", resp.StatusCode)
 	}
 
-	_, data, err = c.Read(ctx)
+	_, data, err = c.ReadMessage()
 	if err != nil {
 		t.Fatalf("second read: %v", err)
 	}
@@ -266,24 +266,25 @@ func TestWebSocketPingPong(t *testing.T) {
 	defer ts.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	deadline := time.Now().Add(5 * time.Second)
 
-	c, _, err := websocket.Dial(ctx, wsURL, nil)
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("ws dial: %v", err)
 	}
-	defer c.Close(websocket.StatusNormalClosure, "test done")
+	defer c.Close()
+	_ = c.SetReadDeadline(deadline)
+	_ = c.SetWriteDeadline(deadline)
 
 	// Drain initial config_update.
-	if _, _, err := c.Read(ctx); err != nil {
+	if _, _, err := c.ReadMessage(); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
 
-	if err := c.Write(ctx, websocket.MessageText, []byte(`{"type":"ping"}`)); err != nil {
+	if err := c.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping"}`)); err != nil {
 		t.Fatalf("write ping: %v", err)
 	}
-	_, data, err := c.Read(ctx)
+	_, data, err := c.ReadMessage()
 	if err != nil {
 		t.Fatalf("read pong: %v", err)
 	}

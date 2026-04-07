@@ -2,4 +2,4 @@ module github.com/nvirellia/hyacinth/server
 
 go 1.25.8
 
-require nhooyr.io/websocket v1.8.17
+require github.com/gorilla/websocket v1.5.3

@@ -1,17 +1,33 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"sync"
 	"time"
 
-	"nhooyr.io/websocket"
+	"github.com/gorilla/websocket"
 )
 
 const listenAddr = "0.0.0.0:8080"
+
+// wsWriteTimeout is the per-write deadline applied before every WS write.
+// gorilla/websocket has no context-based API, so deadlines are set explicitly.
+const wsWriteTimeout = 5 * time.Second
+
+// wsReadTimeout is rolled forward after every successful read so dead clients
+// don't pin a goroutine forever. Application-layer pings from the client (and
+// any PUT-driven broadcast traffic) reset this implicitly via the read loop.
+const wsReadTimeout = 60 * time.Second
+
+// upgrader is the package-level gorilla upgrader. CheckOrigin is permissive
+// for LAN-only deployment; M8 will revisit auth/origin policy.
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin:     func(r *http.Request) bool { return true },
+}
 
 // Config is the in-memory representation of the `/config` payload.
 //
@@ -90,7 +106,10 @@ func (s *hyacinthServer) applyPut(next Config) Config {
 }
 
 // broadcast sends a `config_update` envelope to every connected client.
-// Failed writes drop the offending connection.
+// Failed writes drop the offending connection. The connection-set mutex is
+// held for the entire write loop, which doubles as the per-connection write
+// serialization that gorilla/websocket requires (its *Conn is not safe for
+// concurrent writes).
 func (s *hyacinthServer) broadcast(cfg Config) {
 	envelope := wsEnvelope{Type: "config_update", Config: &cfg}
 	payload, err := json.Marshal(envelope)
@@ -101,15 +120,14 @@ func (s *hyacinthServer) broadcast(cfg Config) {
 	s.connsMu.Lock()
 	dead := make([]*websocket.Conn, 0)
 	for c := range s.conns {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := c.Write(ctx, websocket.MessageText, payload); err != nil {
+		_ = c.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+		if err := c.WriteMessage(websocket.TextMessage, payload); err != nil {
 			dead = append(dead, c)
 		}
-		cancel()
 	}
 	for _, c := range dead {
 		delete(s.conns, c)
-		_ = c.Close(websocket.StatusInternalError, "write failed")
+		_ = c.Close()
 	}
 	s.connsMu.Unlock()
 }
@@ -152,50 +170,54 @@ func (s *hyacinthServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *hyacinthServer) handleWS(w http.ResponseWriter, r *http.Request) {
-	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		// LAN-only deployment; OriginPatterns is not enforced. M8 will add
-		// proper auth on top.
-		InsecureSkipVerify: true,
-	})
+	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("ws accept: %v", err)
 		return
 	}
-	defer c.Close(websocket.StatusNormalClosure, "bye")
+	defer c.Close()
 	s.registerConn(c)
 	defer s.unregisterConn(c)
 
 	// Send the current config immediately so a fresh client doesn't have to
-	// race a separate GET.
+	// race a separate GET. We serialize the initial write under connsMu so it
+	// can't race with a concurrent broadcast (gorilla *Conn is not safe for
+	// concurrent writes).
 	initial := s.snapshot()
 	{
 		envelope := wsEnvelope{Type: "config_update", Config: &initial}
 		payload, _ := json.Marshal(envelope)
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		err := c.Write(ctx, websocket.MessageText, payload)
-		cancel()
-		if err != nil {
+		s.connsMu.Lock()
+		_ = c.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+		writeErr := c.WriteMessage(websocket.TextMessage, payload)
+		s.connsMu.Unlock()
+		if writeErr != nil {
 			return
 		}
 	}
 
 	// Read loop: only thing we care about is `ping` -> `pong`. Everything
-	// else (including unknown envelope types) is dropped.
+	// else (including unknown envelope types) is dropped. The read deadline
+	// is rolled forward after every successful read so a silent client gets
+	// reaped.
+	_ = c.SetReadDeadline(time.Now().Add(wsReadTimeout))
 	for {
-		_, data, err := c.Read(r.Context())
+		_, data, err := c.ReadMessage()
 		if err != nil {
 			return
 		}
+		_ = c.SetReadDeadline(time.Now().Add(wsReadTimeout))
 		var env wsEnvelope
 		if err := json.Unmarshal(data, &env); err != nil {
 			continue
 		}
 		if env.Type == "ping" {
 			pong, _ := json.Marshal(wsEnvelope{Type: "pong"})
-			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-			err := c.Write(ctx, websocket.MessageText, pong)
-			cancel()
-			if err != nil {
+			s.connsMu.Lock()
+			_ = c.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+			writeErr := c.WriteMessage(websocket.TextMessage, pong)
+			s.connsMu.Unlock()
+			if writeErr != nil {
 				return
 			}
 		}
