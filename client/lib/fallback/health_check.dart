@@ -1,0 +1,162 @@
+import 'dart:async';
+
+import 'package:android_intent_plus/android_intent.dart';
+import 'package:http/http.dart' as http;
+import 'package:permission_handler/permission_handler.dart';
+
+import '../config/config_store.dart';
+import '../permissions/perm_manager.dart';
+
+/// Outcome of a single [HealthCheck] row.
+enum CheckStatus { ok, fail, unknown }
+
+/// A single row in the fallback HealthCheck list.
+///
+/// [fix] is optional; when non-null the fallback UI renders a "Fix" button
+/// that invokes it (permission request, settings intent, etc.).
+class CheckResult {
+  const CheckResult({
+    required this.name,
+    required this.status,
+    required this.message,
+    this.fix,
+  });
+
+  final String name;
+  final CheckStatus status;
+  final String message;
+  final Future<void> Function()? fix;
+}
+
+/// Snapshot of all health checks.
+class HealthReport {
+  const HealthReport(this.checks);
+
+  final List<CheckResult> checks;
+
+  /// True when every check is green. Used by [AppState] to decide whether
+  /// the connect flow may proceed to `/config`.
+  bool get allOk => checks.every((c) => c.status == CheckStatus.ok);
+}
+
+/// Runs the M2 health checks.
+///
+/// The M2 check set is intentionally small:
+///   * server URL set (ConfigStore)
+///   * server reachable (`GET <base>/health`)
+///   * notifications permission
+///   * battery-optimisation exemption
+///   * home-launcher role (best-effort, reported as `unknown` — see note
+///     below on why there is no direct API for this in the public SDK)
+class HealthCheck {
+  HealthCheck({
+    ConfigStore? store,
+    PermManager? perms,
+    http.Client? httpClient,
+  })  : _store = store ?? ConfigStore(),
+        _perms = perms ?? const PermManager(),
+        _http = httpClient ?? http.Client();
+
+  static const Duration _pingTimeout = Duration(seconds: 3);
+
+  final ConfigStore _store;
+  final PermManager _perms;
+  final http.Client _http;
+
+  Future<HealthReport> run() async {
+    final results = <CheckResult>[];
+
+    final serverUrl = await _store.loadServerUrl();
+    final hasUrl = serverUrl != null && serverUrl.trim().isNotEmpty;
+    results.add(CheckResult(
+      name: 'Server URL set',
+      status: hasUrl ? CheckStatus.ok : CheckStatus.fail,
+      message: hasUrl ? serverUrl : 'No server URL configured.',
+    ));
+
+    if (hasUrl) {
+      results.add(await _pingServer(serverUrl));
+    } else {
+      results.add(const CheckResult(
+        name: 'Server reachable',
+        status: CheckStatus.fail,
+        message: 'Set a server URL first.',
+      ));
+    }
+
+    results.add(await _notificationCheck());
+    results.add(await _batteryCheck());
+    results.add(_homeRoleCheck());
+
+    return HealthReport(results);
+  }
+
+  Future<CheckResult> _pingServer(String baseUrl) async {
+    final base = baseUrl.endsWith('/')
+        ? baseUrl.substring(0, baseUrl.length - 1)
+        : baseUrl;
+    final uri = Uri.parse('$base/health');
+    try {
+      final resp = await _http.get(uri).timeout(_pingTimeout);
+      if (resp.statusCode == 200) {
+        return CheckResult(
+          name: 'Server reachable',
+          status: CheckStatus.ok,
+          message: 'GET $uri -> 200',
+        );
+      }
+      return CheckResult(
+        name: 'Server reachable',
+        status: CheckStatus.fail,
+        message: 'GET $uri -> HTTP ${resp.statusCode}',
+      );
+    } catch (e) {
+      return CheckResult(
+        name: 'Server reachable',
+        status: CheckStatus.fail,
+        message: '$e',
+      );
+    }
+  }
+
+  Future<CheckResult> _notificationCheck() async {
+    final status = await _perms.notificationStatus();
+    final ok = status.isGranted;
+    return CheckResult(
+      name: 'Notifications permission',
+      status: ok ? CheckStatus.ok : CheckStatus.fail,
+      message: ok ? 'Granted' : 'Not granted ($status)',
+      fix: ok ? null : () => _perms.requestNotifications(),
+    );
+  }
+
+  Future<CheckResult> _batteryCheck() async {
+    final status = await _perms.batteryOptimizationStatus();
+    final ok = status.isGranted;
+    return CheckResult(
+      name: 'Battery optimization exemption',
+      status: ok ? CheckStatus.ok : CheckStatus.fail,
+      message: ok ? 'Exempt' : 'Not exempt ($status)',
+      fix: ok ? null : () => _perms.requestBatteryOptimization(),
+    );
+  }
+
+  /// Home-launcher role: the public Flutter/Android SDK has no portable
+  /// "am I the default home?" query without dropping into platform code
+  /// (`RoleManager.isRoleHeld(ROLE_HOME)` on API 29+, or resolving the
+  /// default home activity). M2 scope explicitly leaves that to later, so
+  /// this check is reported as `unknown` and the Fix button just opens
+  /// the system "Home app" settings screen.
+  CheckResult _homeRoleCheck() {
+    return CheckResult(
+      name: 'Home launcher role',
+      status: CheckStatus.unknown,
+      message: 'Cannot be checked without platform code. Tap Fix to open '
+          'the Android "Default apps" settings and pick Hyacinth.',
+      fix: () async {
+        const intent = AndroidIntent(action: 'android.settings.HOME_SETTINGS');
+        await intent.launch();
+      },
+    );
+  }
+}

@@ -22,6 +22,12 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(configJSON))
 	})
+	// M2: simple liveness endpoint for the client's HealthCheck and
+	// fallback "Test connection" button. Deliberately minimal.
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
 
 	log.Printf("hyacinth server listening on %s", listenAddr)
 	if err := http.ListenAndServe(listenAddr, mux); err != nil {
