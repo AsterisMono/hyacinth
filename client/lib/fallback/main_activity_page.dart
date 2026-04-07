@@ -16,12 +16,18 @@ class MainActivityPage extends StatefulWidget {
     required this.appState,
     ConfigStore? store,
     HealthCheck? healthCheck,
+    HealthReport? initialReport,
   })  : _store = store,
-        _healthCheck = healthCheck;
+        _healthCheck = healthCheck,
+        _initialReport = initialReport;
 
   final AppState appState;
   final ConfigStore? _store;
   final HealthCheck? _healthCheck;
+
+  /// Optional pre-baked report for widget tests; when provided we skip
+  /// the initial async refresh entirely.
+  final HealthReport? _initialReport;
 
   @override
   State<MainActivityPage> createState() => _MainActivityPageState();
@@ -36,7 +42,11 @@ class _MainActivityPageState extends State<MainActivityPage> {
   @override
   void initState() {
     super.initState();
-    _refresh();
+    if (widget._initialReport != null) {
+      _report = widget._initialReport;
+    } else {
+      _refresh();
+    }
   }
 
   Future<void> _refresh() async {
@@ -72,70 +82,77 @@ class _MainActivityPageState extends State<MainActivityPage> {
         ],
       ),
       body: ListView(
+        padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
-          _statusBanner(phase, error),
           _healthSection(),
           SettingsBlock(
             appState: widget.appState,
             store: _store,
           ),
+          _statusFooter(phase, error),
           const SizedBox(height: 16),
         ],
       ),
     );
   }
 
-  Widget _statusBanner(AppPhase phase, String? error) {
-    Color bg;
+  Widget _statusFooter(AppPhase phase, String? error) {
+    final scheme = Theme.of(context).colorScheme;
     String label;
+    IconData icon;
     switch (phase) {
       case AppPhase.connecting:
-        bg = Colors.blueGrey;
         label = 'Connecting…';
+        icon = Icons.sync;
         break;
       case AppPhase.fallback:
-        bg = Colors.red.shade700;
         label = 'Fallback';
+        icon = Icons.warning_amber_outlined;
         break;
       case AppPhase.booting:
-        bg = Colors.grey;
         label = 'Booting';
+        icon = Icons.hourglass_empty;
         break;
       case AppPhase.displaying:
-        bg = Colors.green.shade700;
         label = 'Displaying';
+        icon = Icons.check_circle_outline;
         break;
       case AppPhase.onboarding:
-        bg = Colors.orange;
         label = 'Onboarding';
+        icon = Icons.assignment_outlined;
         break;
     }
-    return Container(
-      width: double.infinity,
-      color: bg,
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'State: $label',
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      color: scheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 12),
+                Text(
+                  'State: $label',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ],
             ),
-          ),
-          if (error != null && error.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                error,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontFamily: 'monospace',
+            if (error != null && error.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  error,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        color: scheme.error,
+                      ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -143,20 +160,20 @@ class _MainActivityPageState extends State<MainActivityPage> {
   Widget _healthSection() {
     final report = _report;
     return Card(
-      margin: const EdgeInsets.all(12),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
+            Text(
               'Health checks',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
             if (_running && report == null)
               const Padding(
-                padding: EdgeInsets.all(8),
+                padding: EdgeInsets.symmetric(vertical: 8),
                 child: LinearProgressIndicator(),
               ),
             if (report != null)
@@ -168,51 +185,41 @@ class _MainActivityPageState extends State<MainActivityPage> {
   }
 
   Widget _checkRow(CheckResult c) {
+    final scheme = Theme.of(context).colorScheme;
     Color dot;
     switch (c.status) {
       case CheckStatus.ok:
-        dot = Colors.green;
+        // Pull a clean green from the M3 surface palette by mixing primary
+        // with a known-good accent. We use a fixed M3-friendly green so that
+        // even with red-shifted dynamic colour the "ok" dot stays readable.
+        dot = const Color(0xFF2E7D32);
         break;
       case CheckStatus.fail:
-        dot = Colors.red;
+        dot = scheme.error;
         break;
       case CheckStatus.unknown:
-        dot = Colors.amber;
+        dot = scheme.tertiary;
         break;
     }
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 12,
-            height: 12,
-            margin: const EdgeInsets.only(top: 4, right: 12),
-            decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  c.name,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                Text(
-                  c.message,
-                  style: const TextStyle(fontFamily: 'monospace'),
-                ),
-              ],
-            ),
-          ),
-          if (c.fix != null)
-            TextButton(
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Container(
+        width: 14,
+        height: 14,
+        margin: const EdgeInsets.only(top: 6),
+        decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+      ),
+      title: Text(c.name),
+      subtitle: Text(
+        c.message,
+        style: const TextStyle(fontFamily: 'monospace'),
+      ),
+      trailing: c.fix != null
+          ? TextButton(
               onPressed: () => _runFix(c.fix!),
               child: const Text('Fix'),
-            ),
-        ],
-      ),
+            )
+          : null,
     );
   }
 }

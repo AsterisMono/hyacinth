@@ -58,4 +58,44 @@ void main() {
       expect(a, isNot(equals(c)));
     });
   });
+
+  group('HyacinthConfig invariants', () {
+    const a = HyacinthConfig(
+      content: 'https://example.com',
+      contentRevision: 'r1',
+      brightness: 'auto',
+      screenTimeout: 'always-on',
+    );
+
+    test('==/hashCode reflexivity', () {
+      expect(a, equals(a));
+      expect(a.hashCode, equals(a.hashCode));
+    });
+
+    test('different contentRevision => not equal', () {
+      const b = HyacinthConfig(
+        content: 'https://example.com',
+        contentRevision: 'r2',
+        brightness: 'auto',
+        screenTimeout: 'always-on',
+      );
+      expect(a, isNot(equals(b)));
+    });
+
+    test('partial JSON missing brightness falls back to default', () {
+      final cfg = HyacinthConfig.fromJson(<String, dynamic>{
+        'content': 'https://example.com',
+        'contentRevision': 'r1',
+        'screenTimeout': 'always-on',
+      });
+      expect(cfg.brightness, 'auto');
+    });
+
+    test('toString is non-empty and contains the fields', () {
+      final s = a.toString();
+      expect(s, isNotEmpty);
+      expect(s, contains('https://example.com'));
+      expect(s, contains('r1'));
+    });
+  });
 }

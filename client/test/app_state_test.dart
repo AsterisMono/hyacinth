@@ -137,4 +137,71 @@ void main() {
     expect(state.error, contains('Server reachable'));
     state.dispose();
   });
+
+  test('dispose() cancels the fallback retry timer', () async {
+    final state = AppState(
+      store: ConfigStore(),
+      client: _ThrowingConfigClient(),
+      healthCheck: _makeHealthCheck(pingOk: true),
+      fallbackRetryInterval: const Duration(milliseconds: 30),
+    );
+    await state.start();
+    expect(state.phase, AppPhase.fallback);
+    // Capture how many notifyListeners cycles fire after dispose; should be
+    // zero since the timer is dead.
+    var notified = 0;
+    state.addListener(() => notified++);
+    state.dispose();
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    expect(notified, 0,
+        reason: 'no notifications should arrive after dispose');
+  });
+
+  test('completeOnboarding() persists URL + flag and connects', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final store = ConfigStore();
+    final state = AppState(
+      store: store,
+      client: _OkConfigClient(),
+      healthCheck: _makeHealthCheck(pingOk: true),
+      fallbackRetryInterval: const Duration(hours: 1),
+    );
+    await state.completeOnboarding('http://server:8080');
+    expect(await store.loadServerUrl(), 'http://server:8080');
+    expect(await store.isOnboardingComplete(), isTrue);
+    expect(state.phase, AppPhase.displaying);
+    state.dispose();
+  });
+
+  test('recheckPermissions() while displaying flips to fallback on regression',
+      () async {
+    // Start green so we land in displaying.
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'hyacinth.serverUrl': 'http://127.0.0.1:8080',
+      'hyacinth.onboardingComplete': true,
+    });
+    var pingOk = true;
+    final mock = MockClient((request) async {
+      return http.Response(pingOk ? '{"ok":true}' : '', pingOk ? 200 : 500);
+    });
+    final hc = HealthCheck(
+      store: ConfigStore(),
+      perms: _GrantedPerms(),
+      httpClient: mock,
+    );
+    final state = AppState(
+      store: ConfigStore(),
+      client: _OkConfigClient(),
+      healthCheck: hc,
+      fallbackRetryInterval: const Duration(hours: 1),
+    );
+    await state.start();
+    expect(state.phase, AppPhase.displaying);
+    // Now flip the ping red and re-check.
+    pingOk = false;
+    await state.recheckPermissions();
+    expect(state.phase, AppPhase.fallback);
+    expect(state.error, isNotNull);
+    state.dispose();
+  });
 }

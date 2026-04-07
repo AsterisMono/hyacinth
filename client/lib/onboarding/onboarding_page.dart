@@ -5,6 +5,13 @@ import '../app_state.dart';
 import '../config/config_store.dart';
 import '../permissions/perm_manager.dart';
 
+/// Default home-settings launcher used in production. Lifted out of the
+/// widget so tests can swap it for a no-op closure.
+Future<void> defaultOpenHomeSettings() async {
+  const intent = AndroidIntent(action: 'android.settings.HOME_SETTINGS');
+  await intent.launch();
+}
+
 /// First-run wizard.
 ///
 /// Steps (in order): explain → notifications → battery opt → home role →
@@ -17,10 +24,23 @@ class OnboardingPage extends StatefulWidget {
     super.key,
     required this.appState,
     this.perms = const PermManager(),
+    this.store,
+    this.onOpenHomeSettings = defaultOpenHomeSettings,
   });
 
   final AppState appState;
   final PermManager perms;
+
+  /// Optional [ConfigStore]. Tests inject one backed by
+  /// `SharedPreferences.setMockInitialValues({})`. In production we let
+  /// [AppState.completeOnboarding] do the persistence; the wizard only
+  /// touches the store directly so widget tests can assert the writes
+  /// landed.
+  final ConfigStore? store;
+
+  /// Hook for the "Open Home settings" button. Defaults to firing the
+  /// `HOME_SETTINGS` intent; tests pass an in-memory recorder.
+  final Future<void> Function() onOpenHomeSettings;
 
   @override
   State<OnboardingPage> createState() => _OnboardingPageState();
@@ -32,6 +52,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
       TextEditingController(text: defaultServerUrl);
   int _step = 0;
   String? _urlError;
+  static const int _stepCount = 5;
 
   @override
   void dispose() {
@@ -41,7 +62,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
   }
 
   void _next() {
-    if (_step >= 4) return;
+    if (_step >= _stepCount - 1) return;
     setState(() => _step += 1);
     _pageController.animateToPage(
       _step,
@@ -62,6 +83,13 @@ class _OnboardingPageState extends State<OnboardingPage> {
       return;
     }
     setState(() => _urlError = null);
+    // Persist directly to the (possibly injected) store as well so widget
+    // tests can assert without having to drive the full AppState.
+    final store = widget.store;
+    if (store != null) {
+      await store.saveServerUrl(raw);
+      await store.setOnboardingComplete(true);
+    }
     await widget.appState.completeOnboarding(raw);
   }
 
@@ -69,59 +97,130 @@ class _OnboardingPageState extends State<OnboardingPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Welcome to Hyacinth')),
-      body: PageView(
-        controller: _pageController,
-        physics: const NeverScrollableScrollPhysics(),
+      body: Column(
         children: [
-          _explainStep(),
-          _notificationsStep(),
-          _batteryStep(),
-          _homeRoleStep(),
-          _serverUrlStep(),
+          Expanded(
+            child: PageView(
+              controller: _pageController,
+              physics: const NeverScrollableScrollPhysics(),
+              children: [
+                _explainStep(),
+                _notificationsStep(),
+                _batteryStep(),
+                _homeRoleStep(),
+                _serverUrlStep(),
+              ],
+            ),
+          ),
+          _stepIndicator(),
         ],
       ),
     );
   }
 
-  Widget _wrap(String title, String body, List<Widget> actions) {
+  Widget _stepIndicator() {
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: Theme.of(context).textTheme.headlineSmall),
+          LinearProgressIndicator(
+            value: (_step + 1) / _stepCount,
+          ),
           const SizedBox(height: 12),
-          Text(body, style: Theme.of(context).textTheme.bodyLarge),
-          const Spacer(),
           Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: actions,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(_stepCount, (i) {
+              final active = i == _step;
+              return Container(
+                width: active ? 20 : 8,
+                height: 8,
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  color: active
+                      ? scheme.primary
+                      : scheme.onSurface.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              );
+            }),
           ),
         ],
       ),
     );
   }
 
+  Widget _heroStep({
+    required IconData icon,
+    required String title,
+    required String body,
+    required List<Widget> actions,
+  }) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Spacer(),
+          Icon(
+            icon,
+            size: 96,
+            color: theme.colorScheme.primary,
+          ),
+          const SizedBox(height: 24),
+          Text(
+            title,
+            style: theme.textTheme.headlineMedium,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            body,
+            style: theme.textTheme.bodyLarge,
+            textAlign: TextAlign.center,
+          ),
+          const Spacer(),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: _spacedActions(actions),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _spacedActions(List<Widget> actions) {
+    final out = <Widget>[];
+    for (var i = 0; i < actions.length; i++) {
+      if (i > 0) out.add(const SizedBox(width: 12));
+      out.add(actions[i]);
+    }
+    return out;
+  }
+
   Widget _explainStep() {
-    return _wrap(
-      'Always-on display for your Ita-Bag',
-      'Hyacinth turns this tablet into a permanently-mounted display that '
-          'renders content pushed from your self-hosted Hyacinth server. '
-          'The next few steps grant the permissions it needs to stay on.',
-      [
+    return _heroStep(
+      icon: Icons.dashboard_customize_outlined,
+      title: 'Always-on display for your Ita-Bag',
+      body: 'Hyacinth turns this tablet into a permanently-mounted display '
+          'that renders content pushed from your self-hosted Hyacinth '
+          'server. The next few steps grant the permissions it needs '
+          'to stay on.',
+      actions: [
         FilledButton(onPressed: _next, child: const Text('Continue')),
       ],
     );
   }
 
   Widget _notificationsStep() {
-    return _wrap(
-      'Notifications permission',
-      'Hyacinth shows a persistent status notification while running. '
+    return _heroStep(
+      icon: Icons.notifications_outlined,
+      title: 'Notifications permission',
+      body: 'Hyacinth shows a persistent status notification while running. '
           'Without this, Android may kill the app in the background.',
-      [
+      actions: [
         TextButton(onPressed: _next, child: const Text('Skip')),
-        const SizedBox(width: 8),
         FilledButton(
           onPressed: () async {
             await widget.perms.requestNotifications();
@@ -134,13 +233,13 @@ class _OnboardingPageState extends State<OnboardingPage> {
   }
 
   Widget _batteryStep() {
-    return _wrap(
-      'Battery optimization exemption',
-      'Android aggressively suspends background apps to save battery. '
+    return _heroStep(
+      icon: Icons.battery_charging_full_outlined,
+      title: 'Battery optimization exemption',
+      body: 'Android aggressively suspends background apps to save battery. '
           'Hyacinth needs to be exempt so the display stays live.',
-      [
+      actions: [
         TextButton(onPressed: _next, child: const Text('Skip')),
-        const SizedBox(width: 8),
         FilledButton(
           onPressed: () async {
             await widget.perms.requestBatteryOptimization();
@@ -153,21 +252,17 @@ class _OnboardingPageState extends State<OnboardingPage> {
   }
 
   Widget _homeRoleStep() {
-    return _wrap(
-      'Pick Hyacinth as your Home app',
-      'So pressing Home always returns to the display, select Hyacinth '
+    return _heroStep(
+      icon: Icons.home_outlined,
+      title: 'Pick Hyacinth as your Home app',
+      body: 'So pressing Home always returns to the display, select Hyacinth '
           'as the default launcher in the Android "Home app" settings. '
           'Tap Open, pick Hyacinth, then come back and tap "I picked it".',
-      [
+      actions: [
         TextButton(
-          onPressed: () async {
-            const intent =
-                AndroidIntent(action: 'android.settings.HOME_SETTINGS');
-            await intent.launch();
-          },
+          onPressed: () => widget.onOpenHomeSettings(),
           child: const Text('Open'),
         ),
-        const SizedBox(width: 8),
         FilledButton(
           onPressed: _next,
           child: const Text('I picked it'),
@@ -177,21 +272,32 @@ class _OnboardingPageState extends State<OnboardingPage> {
   }
 
   Widget _serverUrlStep() {
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          const Spacer(),
+          Icon(
+            Icons.link_outlined,
+            size: 96,
+            color: theme.colorScheme.primary,
+          ),
+          const SizedBox(height: 24),
           Text(
             'Server URL',
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Enter the base URL of your Hyacinth server, e.g. '
-            'http://192.168.1.10:8080',
+            style: theme.textTheme.headlineMedium,
+            textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
+          Text(
+            'Enter the base URL of your Hyacinth server, '
+            'e.g. http://192.168.1.10:8080',
+            style: theme.textTheme.bodyLarge,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
           TextField(
             controller: _urlController,
             keyboardType: TextInputType.url,
@@ -203,11 +309,11 @@ class _OnboardingPageState extends State<OnboardingPage> {
           ),
           const Spacer(),
           Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               FilledButton(
                 onPressed: _finish,
-                child: const Text('Save & continue'),
+                child: const Text('Save'),
               ),
             ],
           ),

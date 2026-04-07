@@ -6,12 +6,17 @@ import '../config/config_model.dart';
 
 /// Fetches the `/config` JSON document from a Hyacinth server base URL.
 class ConfigClient {
-  ConfigClient({http.Client? httpClient}) : _http = httpClient ?? http.Client();
+  ConfigClient({
+    http.Client? httpClient,
+    Duration fetchTimeout = const Duration(seconds: 5),
+  })  : _http = httpClient ?? http.Client(),
+        _fetchTimeout = fetchTimeout;
 
   /// Maximum time to wait for `/config` before giving up. On timeout the
   /// underlying `TimeoutException` propagates to the caller, which in M1
   /// lands in the bootstrap's try/catch and surfaces as an error panel.
-  static const Duration _fetchTimeout = Duration(seconds: 5);
+  /// Tests inject a tighter value via the constructor.
+  final Duration _fetchTimeout;
 
   final http.Client _http;
 

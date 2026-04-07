@@ -138,10 +138,21 @@ Stdlib `net/http` + `nhooyr.io/websocket` (or `gorilla/websocket`). Single file.
 - **WebView security**: disable `file://`, allow only `https:` and the custom scheme.
 - **Pack atomicity**: never unzip into `current/`; always to a version dir, then swap pointer.
 
+## UI Style
+All Flutter UI uses **Material You (Material Design 3)**: `useMaterial3: true` on `ThemeData`, `ColorScheme.fromSeed` (with a Hyacinth-purple seed), dynamic color where the device supports it (`dynamic_color` package), and Material 3 components throughout (`FilledButton`, `NavigationBar`, `Card`, `ListTile`, etc. — no Material 2 / Cupertino mixing). The Display page itself is bare WebView and exempt; all chrome (Onboarding, Fallback, Settings, future Operator-side mobile views) follows M3.
+
+## Per-Milestone Testing Requirement
+Every milestone MUST include real automated tests for the code it adds, and `flutter test` (client) + `go test ./...` (server) must be green before the milestone is marked complete. Tests should exercise behavior, not just construct widgets. Specifically:
+- New units (state machines, parsers, clients, packers) get unit tests with hand-rolled fakes — no mockito.
+- New widgets get at least one widget test that asserts a real invariant (rendered text, button presence, state-after-tap), not "it doesn't crash."
+- Server endpoints get `httptest`-based tests covering happy path + one failure mode.
+- A milestone with the excuse "tests need a real device" must still ship hermetic unit tests for whatever can be tested off-device.
+
 ## Build Order (Milestones)
 - **M0 — Skeletons**: `flutter create client`, `go mod init`, empty `server.go` returning hardcoded `/config` JSON. Client GETs and prints. Prove end-to-end connectivity.
 - **M1 — Minimum viable display**: `flutter_inappwebview` rendering an `https://` URL fullscreen + immersive + wakelock. Persist server URL.
 - **M2 — Fallback + health + onboarding**: `AppState` machine, MainActivity fallback, HealthCheck, onboarding wizard, permission prompts, `CATEGORY_HOME` filter + home-role flow.
+- **M2.5 — Material You audit + test backfill**: Convert all existing client UI (Onboarding, Fallback/MainActivity, Settings, loading/error screens) to Material You / Material Design 3 (`useMaterial3: true`, `ColorScheme.fromSeed`, `dynamic_color` where supported, M3 components). Backfill the per-milestone testing requirement for M0/M1/M2 wherever it's missing: hermetic unit tests for `HyacinthConfig`, `ConfigStore`, `ConfigClient` (with `package:http/testing` MockClient), `AppState` (transitions, fallback retry timer cancel-on-dispose, recheckPermissions flips out of `displaying` when a check goes red), and `HealthCheck`; widget tests for `OnboardingPage` covering all five steps via injected fakes; server-side `httptest` for `/config` and `/health`. Also wire the lifecycle-resume → `recheckPermissions()` hook that M2 deferred.
 - **M3 — WebSocket live updates**: `/ws` broadcast on `PUT /config`. Client `WsClient` with reconnect. Implement and verify "don't reload if unchanged" guard (toggle brightness/timeout without WebView flicker).
 - **M4 — Operator frontend inlined** in `server.go`.
 - **M5 — Resource packs (image)**: upload/list/download, `PackManager` for images, `app-scheme://` handler, Wi-Fi guard, cache layout.
