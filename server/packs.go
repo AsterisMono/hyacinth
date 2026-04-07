@@ -298,7 +298,8 @@ func (s *hyacinthServer) handlePacks(w http.ResponseWriter, r *http.Request) {
 		s.handleUploadPack(w, r)
 	default:
 		w.Header().Set("Allow", "GET, POST")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed,
+			"method_not_allowed", "method not allowed")
 	}
 }
 
@@ -307,13 +308,15 @@ func (s *hyacinthServer) handlePacks(w http.ResponseWriter, r *http.Request) {
 func (s *hyacinthServer) handlePackByID(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/packs/")
 	if rest == "" {
-		http.NotFound(w, r)
+		writeError(w, http.StatusNotFound, "not_found", "not found")
 		return
 	}
 	parts := strings.Split(rest, "/")
 	id := parts[0]
 	if !validPackID(id) {
-		http.Error(w, "invalid pack id", http.StatusBadRequest)
+		logError(r, "bad_request", errors.New("invalid pack id"))
+		writeError(w, http.StatusBadRequest,
+			"bad_request", "invalid pack id (slug ^[a-z0-9][a-z0-9-]{0,31}$)")
 		return
 	}
 	switch {
@@ -324,36 +327,55 @@ func (s *hyacinthServer) handlePackByID(w http.ResponseWriter, r *http.Request) 
 	case len(parts) == 2 && parts[1] == "download" && r.Method == http.MethodGet:
 		s.handleDownloadPack(w, r, id)
 	default:
-		http.NotFound(w, r)
+		writeError(w, http.StatusNotFound, "not_found", "not found")
 	}
 }
 
-func (s *hyacinthServer) handleListPacks(w http.ResponseWriter, _ *http.Request) {
+func (s *hyacinthServer) handleListPacks(w http.ResponseWriter, r *http.Request) {
 	s.packsMu.Lock()
 	defer s.packsMu.Unlock()
 	entries, err := s.readIndex()
 	if err != nil {
-		http.Error(w, "read index: "+err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "read pack index")
+		return
+	}
+	body, err := json.Marshal(entries)
+	if err != nil {
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "encode pack index")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(entries)
+	_, _ = w.Write(body)
 }
 
-func (s *hyacinthServer) handleGetManifest(w http.ResponseWriter, _ *http.Request, id string) {
+func (s *hyacinthServer) handleGetManifest(w http.ResponseWriter, r *http.Request, id string) {
 	s.packsMu.Lock()
 	defer s.packsMu.Unlock()
 	m, err := s.latestManifest(id)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			http.NotFound(w, nil)
+			logError(r, "not_found", err)
+			writeError(w, http.StatusNotFound, "not_found", "pack not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "read manifest")
+		return
+	}
+	body, err := json.Marshal(m)
+	if err != nil {
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "encode manifest")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(m)
+	_, _ = w.Write(body)
 }
 
 func (s *hyacinthServer) handleDownloadPack(w http.ResponseWriter, r *http.Request, id string) {
@@ -362,29 +384,41 @@ func (s *hyacinthServer) handleDownloadPack(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		s.packsMu.Unlock()
 		if errors.Is(err, os.ErrNotExist) {
-			http.NotFound(w, r)
+			logError(r, "not_found", err)
+			writeError(w, http.StatusNotFound, "not_found", "pack not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "read manifest")
 		return
 	}
 	pd, _ := s.packDir(id)
 	srcPath := sourcePath(pd, m)
+	// Open the file BEFORE releasing packsMu so a concurrent DELETE
+	// can't unlink the inode out from under us. On POSIX the OS keeps
+	// the inode alive as long as we hold the descriptor; on Windows the
+	// rename/delete in DELETE would fail, which is fine.
+	f, openErr := os.Open(srcPath)
 	s.packsMu.Unlock()
 
-	f, err := os.Open(srcPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			http.NotFound(w, r)
+	if openErr != nil {
+		if errors.Is(openErr, os.ErrNotExist) {
+			logError(r, "not_found", openErr)
+			writeError(w, http.StatusNotFound, "not_found", "pack file missing")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", openErr)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "open pack file")
 		return
 	}
 	defer f.Close()
 	stat, err := f.Stat()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "stat pack file")
 		return
 	}
 	w.Header().Set("Content-Type", mimeForType(m.Type))
@@ -397,35 +431,46 @@ func (s *hyacinthServer) handleDownloadPack(w http.ResponseWriter, r *http.Reque
 	http.ServeContent(w, r, servedName, stat.ModTime(), f)
 }
 
-func (s *hyacinthServer) handleDeletePack(w http.ResponseWriter, _ *http.Request, id string) {
+func (s *hyacinthServer) handleDeletePack(w http.ResponseWriter, r *http.Request, id string) {
 	s.packsMu.Lock()
 	defer s.packsMu.Unlock()
 
 	pd, err := s.packDir(id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "resolve pack dir")
 		return
 	}
 	if _, err := os.Stat(pd); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			http.NotFound(w, nil)
+			logError(r, "not_found", err)
+			writeError(w, http.StatusNotFound, "not_found", "pack not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "stat pack dir")
 		return
 	}
 	if err := os.RemoveAll(pd); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "remove pack dir")
 		return
 	}
 	entries, err := s.readIndex()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "read pack index")
 		return
 	}
 	entries, _ = removeIndexEntry(entries, id)
 	if err := s.writeIndex(entries); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "write pack index")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -437,11 +482,16 @@ func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request
 	// type-specific check below can still emit a precise error.
 	r.Body = http.MaxBytesReader(w, r.Body, maxZipBodyBytes)
 	if err := r.ParseMultipartForm(maxZipBodyBytes); err != nil {
-		if strings.Contains(err.Error(), "request body too large") {
-			http.Error(w, "pack too large", http.StatusRequestEntityTooLarge)
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) || strings.Contains(err.Error(), "request body too large") {
+			logError(r, "payload_too_large", err)
+			writeError(w, http.StatusRequestEntityTooLarge,
+				"payload_too_large", "pack too large")
 			return
 		}
-		http.Error(w, "multipart parse: "+err.Error(), http.StatusBadRequest)
+		logError(r, "bad_request", err)
+		writeError(w, http.StatusBadRequest,
+			"bad_request", "multipart parse: "+err.Error())
 		return
 	}
 
@@ -449,22 +499,29 @@ func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request
 	packType := strings.TrimSpace(strings.ToLower(r.FormValue("type")))
 
 	if !validPackID(id) {
-		http.Error(w, "invalid pack id (slug ^[a-z0-9][a-z0-9-]{0,31}$)", http.StatusBadRequest)
+		logError(r, "bad_request", errors.New("invalid pack id"))
+		writeError(w, http.StatusBadRequest,
+			"bad_request", "invalid pack id (slug ^[a-z0-9][a-z0-9-]{0,31}$)")
 		return
 	}
 	if !validPackType(packType) {
-		http.Error(w, "invalid pack type (allowed: png, jpg, webp, gif, zip)", http.StatusBadRequest)
+		logError(r, "bad_request", errors.New("invalid pack type"))
+		writeError(w, http.StatusBadRequest,
+			"bad_request", "invalid pack type (allowed: png, jpg, webp, gif, zip)")
 		return
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "missing 'file' part: "+err.Error(), http.StatusBadRequest)
+		logError(r, "bad_request", err)
+		writeError(w, http.StatusBadRequest,
+			"bad_request", "missing 'file' part: "+err.Error())
 		return
 	}
 	defer file.Close()
 	if header.Size <= 0 {
-		http.Error(w, "empty file", http.StatusBadRequest)
+		logError(r, "bad_request", errors.New("empty file"))
+		writeError(w, http.StatusBadRequest, "bad_request", "empty file")
 		return
 	}
 
@@ -478,9 +535,11 @@ func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request
 
 // uploadImagePack is the M5 image-only path, factored out so the dispatch
 // in handleUploadPack stays trivial.
-func (s *hyacinthServer) uploadImagePack(w http.ResponseWriter, _ *http.Request, id, packType string, file io.Reader, header *multipartHeader) {
+func (s *hyacinthServer) uploadImagePack(w http.ResponseWriter, r *http.Request, id, packType string, file io.Reader, header *multipartHeader) {
 	if header.Size > maxPackBodyBytes {
-		http.Error(w, "pack too large", http.StatusRequestEntityTooLarge)
+		logError(r, "payload_too_large", errors.New("image pack too large"))
+		writeError(w, http.StatusRequestEntityTooLarge,
+			"payload_too_large", "pack too large")
 		return
 	}
 
@@ -492,22 +551,29 @@ func (s *hyacinthServer) uploadImagePack(w http.ResponseWriter, _ *http.Request,
 		gotExt = "jpg"
 	}
 	if gotExt != allowedImageExt[packType] {
-		http.Error(w, fmt.Sprintf("file extension %q does not match type %q", gotExt, packType), http.StatusBadRequest)
+		logError(r, "bad_request", errors.New("ext mismatch"))
+		writeError(w, http.StatusBadRequest, "bad_request",
+			fmt.Sprintf("file extension %q does not match type %q", gotExt, packType))
 		return
 	}
 
 	buf, err := io.ReadAll(file)
 	if err != nil {
-		http.Error(w, "read upload: "+err.Error(), http.StatusBadRequest)
+		logError(r, "bad_request", err)
+		writeError(w, http.StatusBadRequest,
+			"bad_request", "read upload: "+err.Error())
 		return
 	}
 	if int64(len(buf)) != header.Size {
-		http.Error(w, "short read", http.StatusBadRequest)
+		logError(r, "bad_request", errors.New("short read"))
+		writeError(w, http.StatusBadRequest, "bad_request", "short read")
 		return
 	}
 	sniff := http.DetectContentType(buf)
 	if !strings.HasPrefix(sniff, "image/") {
-		http.Error(w, "uploaded bytes are not an image (sniffed: "+sniff+")", http.StatusBadRequest)
+		logError(r, "bad_request", errors.New("not image: "+sniff))
+		writeError(w, http.StatusBadRequest, "bad_request",
+			"uploaded bytes are not an image (sniffed: "+sniff+")")
 		return
 	}
 
@@ -519,12 +585,16 @@ func (s *hyacinthServer) uploadImagePack(w http.ResponseWriter, _ *http.Request,
 
 	pd, err := s.packDir(id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "resolve pack dir")
 		return
 	}
 	nextVersion, err := s.nextVersionLocked(pd)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "next version")
 		return
 	}
 
@@ -532,12 +602,16 @@ func (s *hyacinthServer) uploadImagePack(w http.ResponseWriter, _ *http.Request,
 	versionDir := filepath.Join(pd, strconv.Itoa(nextVersion))
 	contentDir := filepath.Join(versionDir, "content")
 	if err := os.MkdirAll(contentDir, 0o755); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "mkdir content")
 		return
 	}
 	contentPath := filepath.Join(contentDir, storedFilename)
 	if err := atomicWriteFile(contentPath, buf); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "write content")
 		return
 	}
 
@@ -550,7 +624,7 @@ func (s *hyacinthServer) uploadImagePack(w http.ResponseWriter, _ *http.Request,
 		Size:      int64(len(buf)),
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	if err := s.writeManifestAndIndex(w, pd, versionDir, manifest); err != nil {
+	if err := s.writeManifestAndIndex(w, r, pd, versionDir, manifest); err != nil {
 		return // writeManifestAndIndex already wrote the error response
 	}
 	s.pruneOldVersionsLocked(pd)
@@ -559,29 +633,38 @@ func (s *hyacinthServer) uploadImagePack(w http.ResponseWriter, _ *http.Request,
 // uploadZipPack handles type=zip uploads: validation, extraction into a
 // staging dir, atomic rename to the version dir, sha256 over the raw zip
 // bytes, manifest write, and index upsert.
-func (s *hyacinthServer) uploadZipPack(w http.ResponseWriter, _ *http.Request, id string, file io.Reader, header *multipartHeader) {
+func (s *hyacinthServer) uploadZipPack(w http.ResponseWriter, r *http.Request, id string, file io.Reader, header *multipartHeader) {
 	if header.Size > maxZipBodyBytes {
-		http.Error(w, "pack too large", http.StatusRequestEntityTooLarge)
+		logError(r, "payload_too_large", errors.New("zip pack too large"))
+		writeError(w, http.StatusRequestEntityTooLarge,
+			"payload_too_large", "pack too large")
 		return
 	}
 
 	buf, err := io.ReadAll(file)
 	if err != nil {
-		http.Error(w, "read upload: "+err.Error(), http.StatusBadRequest)
+		logError(r, "bad_request", err)
+		writeError(w, http.StatusBadRequest,
+			"bad_request", "read upload: "+err.Error())
 		return
 	}
 	if int64(len(buf)) != header.Size {
-		http.Error(w, "short read", http.StatusBadRequest)
+		logError(r, "bad_request", errors.New("short read"))
+		writeError(w, http.StatusBadRequest, "bad_request", "short read")
 		return
 	}
 
 	zr, err := zip.NewReader(bytes.NewReader(buf), int64(len(buf)))
 	if err != nil {
-		http.Error(w, "invalid zip: "+err.Error(), http.StatusBadRequest)
+		logError(r, "bad_request", err)
+		writeError(w, http.StatusBadRequest,
+			"bad_request", "invalid zip: "+err.Error())
 		return
 	}
 	if err := validateZipEntries(zr); err != nil {
-		http.Error(w, "zip validation: "+err.Error(), http.StatusBadRequest)
+		logError(r, "bad_request", err)
+		writeError(w, http.StatusBadRequest,
+			"bad_request", "zip validation: "+err.Error())
 		return
 	}
 
@@ -593,12 +676,16 @@ func (s *hyacinthServer) uploadZipPack(w http.ResponseWriter, _ *http.Request, i
 
 	pd, err := s.packDir(id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "resolve pack dir")
 		return
 	}
 	nextVersion, err := s.nextVersionLocked(pd)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "next version")
 		return
 	}
 
@@ -608,7 +695,9 @@ func (s *hyacinthServer) uploadZipPack(w http.ResponseWriter, _ *http.Request, i
 	_ = os.RemoveAll(stagingDir)
 	contentDir := filepath.Join(stagingDir, "content")
 	if err := os.MkdirAll(contentDir, 0o755); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "mkdir content")
 		return
 	}
 
@@ -616,7 +705,9 @@ func (s *hyacinthServer) uploadZipPack(w http.ResponseWriter, _ *http.Request, i
 	// already verified entry names are safe and capped sizes.
 	if err := extractZipTo(zr, contentDir); err != nil {
 		_ = os.RemoveAll(stagingDir)
-		http.Error(w, "zip extract: "+err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "zip extract: "+err.Error())
 		return
 	}
 
@@ -624,7 +715,9 @@ func (s *hyacinthServer) uploadZipPack(w http.ResponseWriter, _ *http.Request, i
 	// re-serve it byte-for-byte.
 	if err := os.WriteFile(filepath.Join(stagingDir, "source.zip"), buf, 0o644); err != nil {
 		_ = os.RemoveAll(stagingDir)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "write source.zip")
 		return
 	}
 
@@ -640,31 +733,41 @@ func (s *hyacinthServer) uploadZipPack(w http.ResponseWriter, _ *http.Request, i
 	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		_ = os.RemoveAll(stagingDir)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "encode manifest")
 		return
 	}
 	if err := os.WriteFile(filepath.Join(stagingDir, "manifest.json"), manifestBytes, 0o644); err != nil {
 		_ = os.RemoveAll(stagingDir)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "write manifest")
 		return
 	}
 
 	// Atomic flip: rename the entire staging dir to the final version dir.
 	if err := os.Rename(stagingDir, versionDir); err != nil {
 		_ = os.RemoveAll(stagingDir)
-		http.Error(w, "atomic rename: "+err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "atomic rename: "+err.Error())
 		return
 	}
 
 	// Index update.
 	entries, err := s.readIndex()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "read index")
 		return
 	}
 	entries = upsertIndexEntry(entries, manifest)
 	if err := s.writeIndex(entries); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "write index")
 		return
 	}
 	s.pruneOldVersionsLocked(pd)
@@ -688,25 +791,33 @@ func (s *hyacinthServer) nextVersionLocked(packDir string) (int, error) {
 // writeManifestAndIndex writes manifest.json under versionDir and upserts
 // the index entry. On any error it writes an HTTP error response and
 // returns the same error so the caller can early-return. Image-pack only.
-func (s *hyacinthServer) writeManifestAndIndex(w http.ResponseWriter, _ /*packDir*/, versionDir string, manifest PackManifest) error {
+func (s *hyacinthServer) writeManifestAndIndex(w http.ResponseWriter, r *http.Request, _ /*packDir*/, versionDir string, manifest PackManifest) error {
 	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "encode manifest")
 		return err
 	}
 	manifestPath := filepath.Join(versionDir, "manifest.json")
 	if err := atomicWriteFile(manifestPath, manifestBytes); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "write manifest")
 		return err
 	}
 	entries, err := s.readIndex()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "read index")
 		return err
 	}
 	entries = upsertIndexEntry(entries, manifest)
 	if err := s.writeIndex(entries); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "write index")
 		return err
 	}
 	w.Header().Set("Content-Type", "application/json")

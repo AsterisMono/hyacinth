@@ -39,6 +39,63 @@ brightness control and the configured screen timeout is ignored — the
 wakelock keeps the display on while Hyacinth is in the foreground, but the
 system `Settings.System.SCREEN_OFF_TIMEOUT` value itself is unchanged.
 
+## Operator auth token (M8)
+
+By default the Hyacinth server leaves its mutating endpoints (`PUT /config`,
+`POST /packs`, `DELETE /packs/{id}`) open on the LAN. That's fine while you're
+prototyping; for a real wall deployment, set a token:
+
+    HYACINTH_TOKEN=$(openssl rand -hex 24) ./server-binary
+    # or
+    ./server-binary -token your-token-here
+
+When the token is set, every mutating request must carry an
+`Authorization: Bearer <token>` header. Read endpoints (`GET /config`,
+`GET /health`, `GET /packs`, `GET /packs/{id}/manifest`,
+`GET /packs/{id}/download`, the WS upgrade, the operator UI HTML) stay
+open so the tablet can subscribe and render without baking secrets into
+the APK. The operator UI has a "Token" button in the top-right that
+saves the token to `localStorage` and attaches it to mutating fetches
+automatically.
+
+If no token is set at startup, the server logs a `WARNING` line on the
+first line of output. That's intentional — it's a reminder that the LAN
+is the only thing standing between strangers and your config.
+
+## Network security config (M8)
+
+Android 9+ blocks plain-HTTP traffic by default. Hyacinth ships with a
+`network_security_config.xml` permitting cleartext for `localhost` and
+`10.0.2.2` (the Android emulator's loopback). For a production tablet
+on your home Wi-Fi, you have two options:
+
+1. **Add your server's IP/hostname** to
+   `client/android/app/src/main/res/xml/network_security_config.xml` as
+   another `<domain>` entry inside the cleartext `<domain-config>` block,
+   then rebuild the APK. Android's NSC schema does not accept CIDR
+   ranges, so you have to enumerate hosts explicitly.
+2. **Run the server over HTTPS** (e.g. behind a self-signed cert
+   distributed via the system trust store). Then delete the cleartext
+   `<domain-config>` block entirely. This is the right answer for any
+   tablet that ever leaves the house.
+
+## End-to-end smoke checklist
+
+Run this after every fresh deploy. The tablet is referred to as `T`,
+the host running the server as `H`, and the operator browser as `B`.
+
+1. On `H`: `cd server && HYACINTH_TOKEN=mytoken go run .`
+2. On `T`: `flutter install` (or `adb install -r app-release.apk`).
+3. On `T`: `adb shell pm grant io.hyacinth.hyacinth android.permission.WRITE_SECURE_SETTINGS`
+4. On `T`: launch Hyacinth from the home screen. The onboarding page
+   should accept `http://<H-ip>:8080` and proceed to the WebView.
+5. On `B`: open `http://<H-ip>:8080/` in any browser, click "Token",
+   paste `mytoken`. Verify the connection pill goes green.
+6. On `B`: upload an image pack (any PNG), click "Use as content", click
+   "Save". The tablet's display should update within ~1s.
+7. On `T`: power-cycle the tablet. Hyacinth must launch automatically
+   as `HOME` and reconnect to the WS without manual input.
+
 ## Status
 
 - [x] M0 — Project skeletons
@@ -51,4 +108,4 @@ system `Settings.System.SCREEN_OFF_TIMEOUT` value itself is unchanged.
 - [x] M5 — Resource packs (image)
 - [x] M6 — Resource packs (zip)
 - [x] M7 — Brightness + timeout polish
-- [ ] M8+ — see `plan.md`
+- [x] M8 — Hardening (server error paths, auth, NSC, FGS, GC, docs)

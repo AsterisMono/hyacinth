@@ -5,6 +5,7 @@ import 'app_state.dart';
 import 'display/display_page.dart';
 import 'fallback/main_activity_page.dart';
 import 'onboarding/onboarding_page.dart';
+import 'system/foreground_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,6 +26,9 @@ class HyacinthApp extends StatefulWidget {
 
 class _HyacinthAppState extends State<HyacinthApp> with WidgetsBindingObserver {
   late final AppState _appState;
+  // M8: best-effort foreground service stub. Failures are swallowed by
+  // the wrapper; the app still runs.
+  final ForegroundService _foregroundService = ForegroundService();
 
   @override
   void initState() {
@@ -35,12 +39,17 @@ class _HyacinthAppState extends State<HyacinthApp> with WidgetsBindingObserver {
     // `notifyListeners` during `start()` can safely rebuild the tree.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _appState.start();
+      // Fire-and-forget: this is best-effort.
+      _foregroundService.start();
     });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    // Stop the FGS first so its ongoing notification disappears with the
+    // process. The wrapper never throws.
+    _foregroundService.stop();
     _appState.dispose();
     super.dispose();
   }

@@ -1,0 +1,17 @@
+# Top-level ignores. Per-subproject ignores live alongside (e.g. client/.gitignore).
+
+# Go server build artifacts
+server/server
+server/server_*
+server/*.test
+server/data/
+
+# Logs
+*.log
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/

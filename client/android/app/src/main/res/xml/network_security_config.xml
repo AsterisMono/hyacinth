@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  M8 (Track C). Hyacinth lives on a private LAN and needs to talk HTTP +
+  WS (cleartext) to its Go server. Android's NSC schema does NOT accept
+  CIDR ranges; the standard pattern is to whitelist specific dev hosts
+  and let the operator add their actual server hostname/IP here for
+  production tablets.
+
+  For your home Wi-Fi tablet: edit this file, add your server's IP
+  inside another <domain> entry under the cleartext domain-config block,
+  rebuild, reinstall. Or — preferred — terminate TLS at the server and
+  delete the cleartext block entirely.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <!-- Android emulator host loopback -->
+        <domain includeSubdomains="true">10.0.2.2</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>

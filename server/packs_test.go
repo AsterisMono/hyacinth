@@ -67,7 +67,7 @@ func makePackUpload(t *testing.T, id, packType, filename string, payload []byte)
 	return &body, w.FormDataContentType()
 }
 
-func newPacksTestServer(t *testing.T) (*hyacinthServer, *http.ServeMux) {
+func newPacksTestServer(t *testing.T) (*hyacinthServer, http.Handler) {
 	t.Helper()
 	srv := newServer(t.TempDir())
 	return srv, newMuxFor(srv)
