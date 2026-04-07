@@ -8,6 +8,11 @@ import '../config/config_model.dart';
 class ConfigClient {
   ConfigClient({http.Client? httpClient}) : _http = httpClient ?? http.Client();
 
+  /// Maximum time to wait for `/config` before giving up. On timeout the
+  /// underlying `TimeoutException` propagates to the caller, which in M1
+  /// lands in the bootstrap's try/catch and surfaces as an error panel.
+  static const Duration _fetchTimeout = Duration(seconds: 5);
+
   final http.Client _http;
 
   Future<HyacinthConfig> fetch(String serverBaseUrl) async {
@@ -15,7 +20,7 @@ class ConfigClient {
         ? serverBaseUrl.substring(0, serverBaseUrl.length - 1)
         : serverBaseUrl;
     final uri = Uri.parse('$base/config');
-    final response = await _http.get(uri);
+    final response = await _http.get(uri).timeout(_fetchTimeout);
     if (response.statusCode != 200) {
       throw Exception(
         'GET $uri returned HTTP ${response.statusCode}: ${response.body}',

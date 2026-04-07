@@ -1,5 +1,9 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// M1 default server URL. The Android emulator reaches the host machine at
+/// 10.0.2.2; the operator will override this in M2 onboarding.
+const String defaultServerUrl = 'http://10.0.2.2:8080';
+
 /// Persists the operator-supplied server base URL across app launches.
 ///
 /// In M1 there is no onboarding screen (that's M2). Callers should
