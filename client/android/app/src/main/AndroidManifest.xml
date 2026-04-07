@@ -1,9 +1,17 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <!-- Granted via `adb shell pm grant io.hyacinth.hyacinth
+         android.permission.WRITE_SECURE_SETTINGS`. Required for M7
+         brightness/timeout enforcement; without it, Hyacinth falls
+         back to window-only brightness and the configured screen
+         timeout is ignored (the wakelock still keeps the display on). -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions"/>
     <application
         android:label="hyacinth"
         android:name="${applicationName}"

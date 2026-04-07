@@ -264,10 +264,10 @@ class _OnboardingPageState extends State<OnboardingPage> {
           const Spacer(),
           Icon(
             Icons.link_outlined,
-            size: 96,
+            size: 72,
             color: theme.colorScheme.primary,
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           Text(
             'Server URL',
             style: theme.textTheme.headlineMedium,
@@ -289,6 +289,15 @@ class _OnboardingPageState extends State<OnboardingPage> {
               errorText: _urlError,
               border: const OutlineInputBorder(),
             ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Brightness and screen-timeout enforcement are best-effort '
+            'until WRITE_SECURE_SETTINGS is granted via adb. See README.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
           ),
           const Spacer(),
           Row(

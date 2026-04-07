@@ -4,6 +4,9 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../config/config_model.dart';
 import '../resource_pack/pack_cache.dart';
+import '../system/brightness.dart';
+import '../system/config_policy.dart';
+import '../system/secure_settings.dart';
 import 'webview_controller.dart';
 
 /// Top-level fullscreen display surface.
@@ -18,18 +21,38 @@ import 'webview_controller.dart';
 /// [shouldReloadWebView] returns true. Brightness/timeout-only config
 /// updates therefore rebuild the [DisplayPage] but leave the WebView's
 /// element/state untouched, so a playing video does not flicker.
+///
+/// **M7 brightness/timeout**: on mount we snapshot the current system
+/// brightness mode + value + screen-off timeout (if `WRITE_SECURE_SETTINGS`
+/// is granted), then apply the config-specified values. Window brightness
+/// is always applied as a best-effort fallback for the no-permission case.
+/// On unmount we reset the window override and (if we have a snapshot)
+/// restore the system values.
 class DisplayPage extends StatefulWidget {
   const DisplayPage({
     super.key,
     required this.config,
     this.packCache,
-  });
+    WindowBrightness? windowBrightness,
+    SecureSettings? secureSettings,
+  })  : _windowBrightness = windowBrightness,
+        _secureSettings = secureSettings;
 
   final HyacinthConfig config;
 
   /// Pack cache used by the WebView's `app-scheme://` resolver. Optional
   /// — when null, only `https://` content URLs work.
   final PackCache? packCache;
+
+  /// Test seam for the M7 window-brightness layer. Production code
+  /// leaves this null and a default `WindowBrightness()` is built in
+  /// [State.initState].
+  final WindowBrightness? _windowBrightness;
+
+  /// Test seam for the M7 secure-settings layer. Production code leaves
+  /// this null and a default `SecureSettings()` is built in
+  /// [State.initState].
+  final SecureSettings? _secureSettings;
 
   @override
   State<DisplayPage> createState() => _DisplayPageState();
@@ -45,9 +68,29 @@ bool shouldReloadWebView(HyacinthConfig oldCfg, HyacinthConfig newCfg) {
       oldCfg.contentRevision != newCfg.contentRevision;
 }
 
+/// Snapshot of system-side display settings captured on entering the
+/// displaying phase. Restored on leave. All fields nullable because the
+/// underlying getter may return null when permission is missing or the
+/// setting has never been written.
+class _SystemDisplaySnapshot {
+  const _SystemDisplaySnapshot({
+    this.brightness,
+    this.brightnessMode,
+    this.screenOffTimeoutMs,
+  });
+
+  final int? brightness;
+  final int? brightnessMode;
+  final int? screenOffTimeoutMs;
+}
+
 class _DisplayPageState extends State<DisplayPage>
     with WidgetsBindingObserver {
   late HyacinthWebView _webView;
+  late final WindowBrightness _windowBrightness;
+  late final SecureSettings _secureSettings;
+  _SystemDisplaySnapshot? _snapshot;
+  bool _hasSecurePermission = false;
 
   @override
   void initState() {
@@ -55,10 +98,85 @@ class _DisplayPageState extends State<DisplayPage>
     WidgetsBinding.instance.addObserver(this);
     _enterImmersive();
     WakelockPlus.enable();
+    _windowBrightness = widget._windowBrightness ?? WindowBrightness();
+    _secureSettings = widget._secureSettings ?? SecureSettings();
     _webView = HyacinthWebView(
       url: widget.config.content,
       packCache: widget.packCache,
     );
+    // Fire-and-forget. We deliberately don't await this in initState — the
+    // WebView mounts immediately and brightness/timeout are best-effort.
+    // ignore: discard_returned_future
+    _snapshotAndApply();
+  }
+
+  Future<void> _snapshotAndApply() async {
+    try {
+      _hasSecurePermission = await _secureSettings.hasPermission();
+    } catch (e) {
+      debugPrint('SecureSettings.hasPermission failed: $e');
+      _hasSecurePermission = false;
+    }
+    if (_hasSecurePermission) {
+      _snapshot = _SystemDisplaySnapshot(
+        brightness: await _secureSettings.currentBrightness(),
+        brightnessMode: await _secureSettings.currentBrightnessMode(),
+        screenOffTimeoutMs: await _secureSettings.currentScreenOffTimeout(),
+      );
+    }
+    if (!mounted) return;
+    await _applyPolicy(widget.config);
+  }
+
+  Future<void> _applyPolicy(HyacinthConfig cfg) async {
+    final brightness = parseBrightness(cfg.brightness);
+    final timeout = parseScreenTimeout(cfg.screenTimeout);
+
+    // Window brightness — always-on layer, no permission required.
+    try {
+      switch (brightness) {
+        case BrightnessAuto():
+          await _windowBrightness.reset();
+        case BrightnessManual(level: final l):
+          await _windowBrightness.setOverride(l / 100.0);
+      }
+    } catch (e) {
+      debugPrint('window brightness apply failed: $e');
+    }
+
+    if (!_hasSecurePermission) return;
+
+    // System brightness — persists across wake. Only when granted.
+    try {
+      switch (brightness) {
+        case BrightnessAuto():
+          await _secureSettings.setBrightnessMode(1);
+        case BrightnessManual(level: final l):
+          await _secureSettings.setBrightnessMode(0);
+          await _secureSettings.setBrightness((l / 100.0 * 255).round());
+      }
+    } on SecureSettingsDenied catch (e) {
+      debugPrint('system brightness denied: $e');
+      _hasSecurePermission = false;
+    } catch (e) {
+      debugPrint('system brightness apply failed: $e');
+    }
+
+    // Screen-off timeout.
+    try {
+      switch (timeout) {
+        case TimeoutAlwaysOn():
+          await _secureSettings
+              .setScreenOffTimeout(SecureSettings.alwaysOnTimeoutMs);
+        case TimeoutDuration(value: final d):
+          await _secureSettings.setScreenOffTimeout(d.inMilliseconds);
+      }
+    } on SecureSettingsDenied catch (e) {
+      debugPrint('screen timeout denied: $e');
+      _hasSecurePermission = false;
+    } catch (e) {
+      debugPrint('screen timeout apply failed: $e');
+    }
   }
 
   @override
@@ -83,6 +201,15 @@ class _DisplayPageState extends State<DisplayPage>
         packCache: widget.packCache,
       );
     }
+    // Reapply brightness/timeout if either field actually changed.
+    final brightnessChanged =
+        oldWidget.config.brightness != widget.config.brightness;
+    final timeoutChanged =
+        oldWidget.config.screenTimeout != widget.config.screenTimeout;
+    if (brightnessChanged || timeoutChanged) {
+      // ignore: discard_returned_future
+      _applyPolicy(widget.config);
+    }
   }
 
   @override
@@ -90,7 +217,34 @@ class _DisplayPageState extends State<DisplayPage>
     WidgetsBinding.instance.removeObserver(this);
     WakelockPlus.disable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    // Best-effort restoration. We deliberately don't await — dispose
+    // must return synchronously and the platform calls are fire-and-forget.
+    // ignore: discard_returned_future
+    _restore();
     super.dispose();
+  }
+
+  Future<void> _restore() async {
+    try {
+      await _windowBrightness.reset();
+    } catch (e) {
+      debugPrint('window brightness reset failed: $e');
+    }
+    final snap = _snapshot;
+    if (snap == null || !_hasSecurePermission) return;
+    try {
+      if (snap.brightnessMode != null) {
+        await _secureSettings.setBrightnessMode(snap.brightnessMode!);
+      }
+      if (snap.brightness != null) {
+        await _secureSettings.setBrightness(snap.brightness!);
+      }
+      if (snap.screenOffTimeoutMs != null) {
+        await _secureSettings.setScreenOffTimeout(snap.screenOffTimeoutMs!);
+      }
+    } catch (e) {
+      debugPrint('system display restore failed: $e');
+    }
   }
 
   @override

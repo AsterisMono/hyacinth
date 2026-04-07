@@ -26,6 +26,19 @@ Recipes in the top-level `Justfile`. Run from the repo root.
 
 On Fedora 43: `sudo dnf install just`. Via Cargo: `cargo install just`. See https://just.systems for other platforms.
 
+## Granting `WRITE_SECURE_SETTINGS`
+
+Brightness and screen-timeout enforcement (M7) use `WRITE_SECURE_SETTINGS`,
+which Android does not let normal apps request via a system dialog. Grant
+it once via `adb` after installing:
+
+    adb shell pm grant io.hyacinth.hyacinth android.permission.WRITE_SECURE_SETTINGS
+
+The grant survives reboot. Without it, Hyacinth falls back to window-only
+brightness control and the configured screen timeout is ignored — the
+wakelock keeps the display on while Hyacinth is in the foreground, but the
+system `Settings.System.SCREEN_OFF_TIMEOUT` value itself is unchanged.
+
 ## Status
 
 - [x] M0 — Project skeletons
@@ -35,7 +48,7 @@ On Fedora 43: `sudo dnf install just`. Via Cargo: `cargo install just`. See http
 - [x] M3 — WebSocket live updates
 - [x] M4 — Operator frontend (Material 3 via `@material/web`)
 - [x] M4.5 — Justfile + first real APK build
-- [ ] M5 — Resource packs (image)
-- [ ] M6 — Resource packs (zip)
-- [ ] M7 — Brightness + timeout polish
+- [x] M5 — Resource packs (image)
+- [x] M6 — Resource packs (zip)
+- [x] M7 — Brightness + timeout polish
 - [ ] M8+ — see `plan.md`
