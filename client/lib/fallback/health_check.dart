@@ -132,7 +132,7 @@ class HealthCheck {
     }
     return CheckResult(
       name: 'System brightness/timeout permission',
-      status: CheckStatus.fail,
+      status: CheckStatus.warn,
       message: 'Not granted — brightness/timeout fall back to window-only.',
       fix: () async {
         final granted = await _rootHelper.grantWriteSecureSettings();

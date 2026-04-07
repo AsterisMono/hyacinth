@@ -226,7 +226,7 @@ void main() {
       expect(row.status, CheckStatus.ok);
     });
 
-    test('secure settings row: fail + Fix when not granted; Fix calls root',
+    test('secure settings row: warn + Fix when not granted; Fix calls root',
         () async {
       SharedPreferences.setMockInitialValues(<String, Object>{
         'hyacinth.serverUrl': 'http://server:8080',
@@ -240,7 +240,7 @@ void main() {
       final report = await hc.run();
       final row = report.checks.firstWhere(
           (c) => c.name == 'System brightness/timeout permission');
-      expect(row.status, CheckStatus.fail);
+      expect(row.status, CheckStatus.warn);
       expect(row.fix, isNotNull);
       await row.fix!();
       expect(root.wssCalls, 1);
