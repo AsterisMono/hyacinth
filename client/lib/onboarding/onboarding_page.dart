@@ -3,10 +3,18 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../config/config_store.dart';
 import '../permissions/perm_manager.dart';
+import '../system/root_helper.dart';
 
 /// First-run wizard.
 ///
-/// Steps (in order): explain → notifications → battery opt → server URL.
+/// Steps (in order): explain → root → notifications → battery opt → server URL.
+/// The "root" step (M8.1) is always shown but reduces to a single tap on
+/// non-rooted tablets ("Skip"). When `RootHelper.autoGrantAll` reports a
+/// permission landed via root, the corresponding follow-up step (notifications,
+/// battery) is removed from the wizard before we advance — both the step
+/// list and the progress indicator denominator reflect the post-grant
+/// reality, not a placeholder count.
+///
 /// All permission steps are skippable but warn; the user lands in fallback
 /// if they skip something that later matters. The final step saves the
 /// server URL, marks onboarding complete, and asks [AppState] to transition
@@ -17,6 +25,7 @@ class OnboardingPage extends StatefulWidget {
     required this.appState,
     this.perms = const PermManager(),
     this.store,
+    this.root,
   });
 
   final AppState appState;
@@ -29,17 +38,47 @@ class OnboardingPage extends StatefulWidget {
   /// landed.
   final ConfigStore? store;
 
+  /// Optional [RootHelper]. Tests inject a fake to drive the M8.1 root
+  /// probe / grant flow without hitting a real `su` binary.
+  final RootHelper? root;
+
   @override
   State<OnboardingPage> createState() => _OnboardingPageState();
 }
+
+enum _StepKind { explain, root, notifications, battery, serverUrl }
 
 class _OnboardingPageState extends State<OnboardingPage> {
   final PageController _pageController = PageController();
   final TextEditingController _urlController =
       TextEditingController(text: defaultServerUrl);
+
+  /// The currently-active list of steps. Mutated when the root step
+  /// completes — successful grants pop their follow-up steps off the
+  /// list before we advance. Order is preserved.
+  late List<_StepKind> _steps;
   int _step = 0;
   String? _urlError;
-  static const int _stepCount = 4;
+
+  // Root step state.
+  bool _rootChecking = false;
+  RootGrantSummary? _rootSummary;
+  bool _didGrantWriteSecureSettings = false;
+
+  late final RootHelper _root;
+
+  @override
+  void initState() {
+    super.initState();
+    _root = widget.root ?? RootHelper();
+    _steps = const [
+      _StepKind.explain,
+      _StepKind.root,
+      _StepKind.notifications,
+      _StepKind.battery,
+      _StepKind.serverUrl,
+    ];
+  }
 
   @override
   void dispose() {
@@ -49,13 +88,48 @@ class _OnboardingPageState extends State<OnboardingPage> {
   }
 
   void _next() {
-    if (_step >= _stepCount - 1) return;
+    if (_step >= _steps.length - 1) return;
     setState(() => _step += 1);
     _pageController.animateToPage(
       _step,
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeOut,
     );
+  }
+
+  /// Called when the user taps Continue on the root step. If grants
+  /// succeeded for notifications / battery, those steps are dropped
+  /// from `_steps` BEFORE advancing — that way the progress indicator
+  /// denominator is honest and we never animate into a step that we
+  /// will then immediately leave.
+  void _advanceFromRoot() {
+    final summary = _rootSummary;
+    if (summary != null) {
+      final next = <_StepKind>[];
+      for (final s in _steps) {
+        if (s == _StepKind.notifications && summary.postNotifications) continue;
+        if (s == _StepKind.battery && summary.batteryOpt) continue;
+        next.add(s);
+      }
+      setState(() => _steps = next);
+    }
+    _next();
+  }
+
+  Future<void> _runRootProbe() async {
+    setState(() => _rootChecking = true);
+    final summary = await _root.autoGrantAll();
+    final store = widget.store;
+    if (store != null) {
+      await store.setRootChecked(true);
+      await store.setRootAvailable(summary.rootAvailable);
+    }
+    if (!mounted) return;
+    setState(() {
+      _rootChecking = false;
+      _rootSummary = summary;
+      _didGrantWriteSecureSettings = summary.writeSecureSettings;
+    });
   }
 
   Future<void> _finish() async {
@@ -91,10 +165,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
               controller: _pageController,
               physics: const NeverScrollableScrollPhysics(),
               children: [
-                _wrap(_explainStep()),
-                _wrap(_notificationsStep()),
-                _wrap(_batteryStep()),
-                _wrap(_serverUrlStep()),
+                for (final s in _steps) _wrap(_buildStep(s)),
               ],
             ),
           ),
@@ -107,6 +178,21 @@ class _OnboardingPageState extends State<OnboardingPage> {
         ],
       ),
     );
+  }
+
+  Widget _buildStep(_StepKind kind) {
+    switch (kind) {
+      case _StepKind.explain:
+        return _explainStep();
+      case _StepKind.root:
+        return _rootStep();
+      case _StepKind.notifications:
+        return _notificationsStep();
+      case _StepKind.battery:
+        return _batteryStep();
+      case _StepKind.serverUrl:
+        return _serverUrlStep();
+    }
   }
 
   /// Constrains step content to a comfortable M3 reading width on
@@ -123,17 +209,18 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
   Widget _stepIndicator() {
     final scheme = Theme.of(context).colorScheme;
+    final stepCount = _steps.length;
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
       child: Column(
         children: [
           LinearProgressIndicator(
-            value: (_step + 1) / _stepCount,
+            value: (_step + 1) / stepCount,
           ),
           const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(_stepCount, (i) {
+            children: List.generate(stepCount, (i) {
               final active = i == _step;
               return Container(
                 width: active ? 20 : 8,
@@ -158,32 +245,47 @@ class _OnboardingPageState extends State<OnboardingPage> {
     required String title,
     required String body,
     required List<Widget> actions,
+    List<Widget> extras = const [],
   }) {
     final theme = Theme.of(context);
+    // The root step extras list (per-permission summary) can push the
+    // body taller than the available viewport on small landscape
+    // tablets in test mode. Wrap the content in a SingleChildScrollView
+    // so it remains accessible without overflow.
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Spacer(),
-          Icon(
-            icon,
-            size: 96,
-            color: theme.colorScheme.primary,
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 24),
+                  Icon(
+                    icon,
+                    size: 96,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    title,
+                    style: theme.textTheme.headlineMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    body,
+                    style: theme.textTheme.bodyLarge,
+                    textAlign: TextAlign.center,
+                  ),
+                  ...extras,
+                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
           ),
-          const SizedBox(height: 24),
-          Text(
-            title,
-            style: theme.textTheme.headlineMedium,
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            body,
-            style: theme.textTheme.bodyLarge,
-            textAlign: TextAlign.center,
-          ),
-          const Spacer(),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: _spacedActions(actions),
@@ -213,6 +315,114 @@ class _OnboardingPageState extends State<OnboardingPage> {
       actions: [
         FilledButton(onPressed: _next, child: const Text('Continue')),
       ],
+    );
+  }
+
+  Widget _rootStep() {
+    final theme = Theme.of(context);
+    final summary = _rootSummary;
+
+    final List<Widget> extras;
+    final List<Widget> actions;
+
+    if (_rootChecking) {
+      extras = const [
+        SizedBox(height: 24),
+        Center(child: CircularProgressIndicator()),
+      ];
+      actions = const [];
+    } else if (summary == null) {
+      extras = const [];
+      actions = [
+        TextButton(onPressed: _next, child: const Text('Skip')),
+        FilledButton(
+          onPressed: _runRootProbe,
+          child: const Text('Check for root and grant'),
+        ),
+      ];
+    } else {
+      // Render the per-permission summary list.
+      extras = [
+        const SizedBox(height: 24),
+        _grantRow(
+          label: 'Root access',
+          granted: summary.rootAvailable,
+          deniedLabel: 'Not available',
+        ),
+        _grantRow(
+          label: 'WRITE_SECURE_SETTINGS',
+          granted: summary.writeSecureSettings,
+        ),
+        _grantRow(
+          label: 'POST_NOTIFICATIONS',
+          granted: summary.postNotifications,
+        ),
+        _grantRow(
+          label: 'Battery optimization exemption',
+          granted: summary.batteryOpt,
+        ),
+        if (!summary.rootAvailable)
+          Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: Text(
+              'Root not detected. You can still grant the remaining '
+              'permissions through the next steps.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+      ];
+      actions = [
+        FilledButton(
+          onPressed: _advanceFromRoot,
+          child: const Text('Continue'),
+        ),
+      ];
+    }
+
+    return _heroStep(
+      icon: Icons.security_outlined,
+      title: 'Root access (optional)',
+      body: 'Hyacinth can grant its own permissions on rooted tablets. '
+          "We'll check now — this may show a Magisk/KernelSU prompt.",
+      actions: actions,
+      extras: extras,
+    );
+  }
+
+  Widget _grantRow({
+    required String label,
+    required bool granted,
+    String deniedLabel = 'Skipped',
+  }) {
+    final theme = Theme.of(context);
+    final colour = granted
+        ? const Color(0xFF2E7D32)
+        : theme.colorScheme.onSurface.withValues(alpha: 0.5);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(
+            granted ? Icons.check_circle : Icons.cancel_outlined,
+            color: colour,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              label,
+              style: theme.textTheme.bodyMedium,
+            ),
+          ),
+          Text(
+            granted ? 'Granted' : deniedLabel,
+            style: theme.textTheme.bodySmall?.copyWith(color: colour),
+          ),
+        ],
+      ),
     );
   }
 
@@ -290,15 +500,17 @@ class _OnboardingPageState extends State<OnboardingPage> {
               border: const OutlineInputBorder(),
             ),
           ),
-          const SizedBox(height: 16),
-          Text(
-            'Brightness and screen-timeout enforcement are best-effort '
-            'until WRITE_SECURE_SETTINGS is granted via adb. See README.',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
+          if (!_didGrantWriteSecureSettings) ...[
+            const SizedBox(height: 16),
+            Text(
+              'Brightness and screen-timeout enforcement are best-effort '
+              'until WRITE_SECURE_SETTINGS is granted via adb. See README.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
             ),
-            textAlign: TextAlign.center,
-          ),
+          ],
           const Spacer(),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,

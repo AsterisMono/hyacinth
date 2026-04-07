@@ -2,10 +2,13 @@ import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
 
 import 'app_state.dart';
+import 'config/config_store.dart';
 import 'display/display_page.dart';
 import 'fallback/main_activity_page.dart';
 import 'onboarding/onboarding_page.dart';
 import 'system/foreground_service.dart';
+import 'system/root_helper.dart';
+import 'system/secure_settings.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,7 +44,27 @@ class _HyacinthAppState extends State<HyacinthApp> with WidgetsBindingObserver {
       _appState.start();
       // Fire-and-forget: this is best-effort.
       _foregroundService.start();
+      // M8.1 — silent re-grant of WRITE_SECURE_SETTINGS on boot. Only
+      // fires if the cache says root was previously available AND the
+      // current grant has been dropped (e.g. after an app reinstall).
+      // We deliberately do NOT call hasRoot() here — that would trigger
+      // a Magisk consent dialog. We just attempt the grant; Magisk
+      // remembers prior consent across reinstalls.
+      _maybeSilentRegrant();
     });
+  }
+
+  Future<void> _maybeSilentRegrant() async {
+    try {
+      final store = ConfigStore();
+      final available = await store.getRootAvailable();
+      if (!available) return;
+      final secure = SecureSettings();
+      if (await secure.hasPermission()) return;
+      await RootHelper().grantWriteSecureSettings();
+    } catch (_) {
+      // Best-effort. HealthCheck row will surface any persistent gap.
+    }
   }
 
   @override

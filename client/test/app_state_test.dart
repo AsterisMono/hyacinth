@@ -21,6 +21,7 @@ import 'package:hyacinth/resource_pack/pack_cache.dart';
 import 'package:hyacinth/resource_pack/pack_manager.dart';
 import 'package:hyacinth/resource_pack/pack_manifest.dart';
 import 'package:hyacinth/resource_pack/wifi_guard.dart';
+import 'package:hyacinth/system/secure_settings.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -134,6 +135,16 @@ WsClient _inertWsClient(
   );
 }
 
+/// Fake [SecureSettings] that always reports the permission as granted.
+/// Without it, the new M8.1 health row added in this milestone would
+/// hard-fail on every test (real channel returns false in test env)
+/// and tip every AppState test into fallback.
+class _GrantedSecureSettings extends SecureSettings {
+  _GrantedSecureSettings() : super();
+  @override
+  Future<bool> hasPermission() async => true;
+}
+
 HealthCheck _makeHealthCheck({required bool pingOk}) {
   final mock = MockClient((request) async {
     if (request.url.path.endsWith('/health')) {
@@ -145,6 +156,7 @@ HealthCheck _makeHealthCheck({required bool pingOk}) {
     store: ConfigStore(),
     perms: _GrantedPerms(),
     httpClient: mock,
+    secureSettings: _GrantedSecureSettings(),
   );
 }
 
@@ -268,6 +280,7 @@ void main() {
       store: ConfigStore(),
       perms: _GrantedPerms(),
       httpClient: mock,
+      secureSettings: _GrantedSecureSettings(),
     );
     final state = AppState(
       store: ConfigStore(),

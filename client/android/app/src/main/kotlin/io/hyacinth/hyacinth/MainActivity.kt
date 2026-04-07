@@ -6,106 +6,186 @@ import android.os.Build
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
+
+/// Hardcoded application id. Used by the root grant strings so we never
+/// build them from arbitrary input — this keeps `runAsRoot` calls audited
+/// and shell-injection-free. Must match `applicationId` in
+/// `app/build.gradle.kts`.
+private const val PACKAGE_NAME = "io.hyacinth.hyacinth"
+
+private data class RootResult(
+    val ok: Boolean,
+    val stdout: String,
+    val stderr: String,
+    val exit: Int,
+)
 
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
+        configureForegroundServiceChannel(messenger)
+        configureSecureSettingsChannel(messenger)
+        configureRootChannel(messenger)
+    }
 
-        // M8 — foreground service control. Dart calls start() in
-        // initState(); stop() in dispose(). Catches the inevitable
-        // SecurityException on devices that haven't granted
-        // POST_NOTIFICATIONS so the app keeps running even if the
-        // foreground stub fails to attach.
-        MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            "io.hyacinth/foreground_service",
-        ).setMethodCallHandler { call, result ->
-            try {
-                when (call.method) {
-                    "start" -> {
-                        val intent = Intent(this, WsForegroundService::class.java)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            startForegroundService(intent)
-                        } else {
-                            startService(intent)
+    // M8 — foreground service control. Dart calls start() in
+    // initState(); stop() in dispose(). Catches the inevitable
+    // SecurityException on devices that haven't granted
+    // POST_NOTIFICATIONS so the app keeps running even if the
+    // foreground stub fails to attach.
+    private fun configureForegroundServiceChannel(messenger: BinaryMessenger) {
+        MethodChannel(messenger, "io.hyacinth/foreground_service")
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "start" -> {
+                            val intent = Intent(this, WsForegroundService::class.java)
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                startForegroundService(intent)
+                            } else {
+                                startService(intent)
+                            }
+                            result.success(null)
                         }
-                        result.success(null)
+                        "stop" -> {
+                            stopService(Intent(this, WsForegroundService::class.java))
+                            result.success(null)
+                        }
+                        else -> result.notImplemented()
                     }
-                    "stop" -> {
-                        stopService(Intent(this, WsForegroundService::class.java))
-                        result.success(null)
-                    }
-                    else -> result.notImplemented()
+                } catch (e: SecurityException) {
+                    result.error("PERMISSION_DENIED", e.message, null)
+                } catch (e: Exception) {
+                    result.error("ERROR", e.message, null)
                 }
-            } catch (e: SecurityException) {
-                result.error("PERMISSION_DENIED", e.message, null)
-            } catch (e: Exception) {
-                result.error("ERROR", e.message, null)
             }
-        }
-        MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            "io.hyacinth/secure_settings",
-        ).setMethodCallHandler { call, result ->
-            try {
+    }
+
+    private fun configureSecureSettingsChannel(messenger: BinaryMessenger) {
+        MethodChannel(messenger, "io.hyacinth/secure_settings")
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "hasPermission" -> result.success(
+                            checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS")
+                                == PackageManager.PERMISSION_GRANTED
+                        )
+                        "currentBrightness" -> result.success(
+                            Settings.System.getInt(
+                                contentResolver,
+                                Settings.System.SCREEN_BRIGHTNESS,
+                            )
+                        )
+                        "currentBrightnessMode" -> result.success(
+                            Settings.System.getInt(
+                                contentResolver,
+                                Settings.System.SCREEN_BRIGHTNESS_MODE,
+                            )
+                        )
+                        "currentScreenOffTimeout" -> result.success(
+                            Settings.System.getInt(
+                                contentResolver,
+                                Settings.System.SCREEN_OFF_TIMEOUT,
+                            )
+                        )
+                        "setBrightness" -> {
+                            val v = (call.argument<Int>("value") ?: 0).coerceIn(0, 255)
+                            Settings.System.putInt(
+                                contentResolver,
+                                Settings.System.SCREEN_BRIGHTNESS,
+                                v,
+                            )
+                            result.success(null)
+                        }
+                        "setBrightnessMode" -> {
+                            val v = call.argument<Int>("mode") ?: 0
+                            Settings.System.putInt(
+                                contentResolver,
+                                Settings.System.SCREEN_BRIGHTNESS_MODE,
+                                v,
+                            )
+                            result.success(null)
+                        }
+                        "setScreenOffTimeout" -> {
+                            val v = call.argument<Int>("ms") ?: Int.MAX_VALUE
+                            Settings.System.putInt(
+                                contentResolver,
+                                Settings.System.SCREEN_OFF_TIMEOUT,
+                                v,
+                            )
+                            result.success(null)
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (e: SecurityException) {
+                    result.error("PERMISSION_DENIED", e.message, null)
+                } catch (e: Exception) {
+                    result.error("ERROR", e.message, null)
+                }
+            }
+    }
+
+    // M8.1 — root-based self-grant. Each method runs ONE hardcoded
+    // command via `su -c`. We deliberately do NOT expose a generic
+    // runAsRoot(cmd) over the channel: keeping the grant strings on the
+    // Kotlin side eliminates any shell-injection footgun even from our
+    // own Dart code.
+    //
+    // These methods MUST only be called in response to explicit user
+    // action (onboarding step or HealthCheck Fix button). Each `su`
+    // call triggers a Magisk/KernelSU consent dialog on first use; the
+    // four onboarding calls run back-to-back so the user only sees
+    // the prompt once.
+    private fun configureRootChannel(messenger: BinaryMessenger) {
+        MethodChannel(messenger, "io.hyacinth/root")
+            .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "hasPermission" -> result.success(
-                        checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS")
-                            == PackageManager.PERMISSION_GRANTED
-                    )
-                    "currentBrightness" -> result.success(
-                        Settings.System.getInt(
-                            contentResolver,
-                            Settings.System.SCREEN_BRIGHTNESS,
-                        )
-                    )
-                    "currentBrightnessMode" -> result.success(
-                        Settings.System.getInt(
-                            contentResolver,
-                            Settings.System.SCREEN_BRIGHTNESS_MODE,
-                        )
-                    )
-                    "currentScreenOffTimeout" -> result.success(
-                        Settings.System.getInt(
-                            contentResolver,
-                            Settings.System.SCREEN_OFF_TIMEOUT,
-                        )
-                    )
-                    "setBrightness" -> {
-                        val v = (call.argument<Int>("value") ?: 0).coerceIn(0, 255)
-                        Settings.System.putInt(
-                            contentResolver,
-                            Settings.System.SCREEN_BRIGHTNESS,
-                            v,
-                        )
-                        result.success(null)
+                    "hasRoot" -> {
+                        val r = runAsRoot("id", 3_000)
+                        result.success(r.ok && r.stdout.contains("uid=0"))
                     }
-                    "setBrightnessMode" -> {
-                        val v = call.argument<Int>("mode") ?: 0
-                        Settings.System.putInt(
-                            contentResolver,
-                            Settings.System.SCREEN_BRIGHTNESS_MODE,
-                            v,
+                    "grantWriteSecureSettings" -> {
+                        val r = runAsRoot(
+                            "pm grant $PACKAGE_NAME android.permission.WRITE_SECURE_SETTINGS"
                         )
-                        result.success(null)
+                        result.success(r.ok)
                     }
-                    "setScreenOffTimeout" -> {
-                        val v = call.argument<Int>("ms") ?: Int.MAX_VALUE
-                        Settings.System.putInt(
-                            contentResolver,
-                            Settings.System.SCREEN_OFF_TIMEOUT,
-                            v,
+                    "grantPostNotifications" -> {
+                        val r = runAsRoot(
+                            "pm grant $PACKAGE_NAME android.permission.POST_NOTIFICATIONS"
                         )
-                        result.success(null)
+                        result.success(r.ok)
+                    }
+                    "whitelistBatteryOpt" -> {
+                        val r = runAsRoot(
+                            "dumpsys deviceidle whitelist +$PACKAGE_NAME"
+                        )
+                        result.success(r.ok)
                     }
                     else -> result.notImplemented()
                 }
-            } catch (e: SecurityException) {
-                result.error("PERMISSION_DENIED", e.message, null)
-            } catch (e: Exception) {
-                result.error("ERROR", e.message, null)
             }
+    }
+
+    private fun runAsRoot(cmd: String, timeoutMs: Long = 5_000): RootResult {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+            val finished = process.waitFor(
+                timeoutMs,
+                java.util.concurrent.TimeUnit.MILLISECONDS,
+            )
+            if (!finished) {
+                process.destroyForcibly()
+                return RootResult(false, "", "timeout", -1)
+            }
+            val stdout = process.inputStream.bufferedReader().readText()
+            val stderr = process.errorStream.bufferedReader().readText()
+            RootResult(process.exitValue() == 0, stdout, stderr, process.exitValue())
+        } catch (e: Exception) {
+            RootResult(false, "", e.message ?: "error", -1)
         }
     }
 }

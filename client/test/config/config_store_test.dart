@@ -34,4 +34,26 @@ void main() {
     await store.setOnboardingComplete(true);
     expect(await store.isOnboardingComplete(), isTrue);
   });
+
+  test('getRootChecked defaults to false', () async {
+    final store = ConfigStore();
+    expect(await store.getRootChecked(), isFalse);
+  });
+
+  test('setRootChecked(true) round-trips', () async {
+    final store = ConfigStore();
+    await store.setRootChecked(true);
+    expect(await store.getRootChecked(), isTrue);
+  });
+
+  test('getRootAvailable defaults to false', () async {
+    final store = ConfigStore();
+    expect(await store.getRootAvailable(), isFalse);
+  });
+
+  test('setRootAvailable(true) round-trips', () async {
+    final store = ConfigStore();
+    await store.setRootAvailable(true);
+    expect(await store.getRootAvailable(), isTrue);
+  });
 }

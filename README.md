@@ -29,8 +29,16 @@ On Fedora 43: `sudo dnf install just`. Via Cargo: `cargo install just`. See http
 ## Granting `WRITE_SECURE_SETTINGS`
 
 Brightness and screen-timeout enforcement (M7) use `WRITE_SECURE_SETTINGS`,
-which Android does not let normal apps request via a system dialog. Grant
-it once via `adb` after installing:
+which Android does not let normal apps request via a system dialog.
+
+**On rooted tablets (Magisk / KernelSU):** the onboarding wizard offers a
+"Check for root and grant" step (M8.1). Tap it once, accept the Magisk
+consent prompt, and Hyacinth will `pm grant` itself `WRITE_SECURE_SETTINGS`,
+`POST_NOTIFICATIONS`, and the battery-optimization whitelist in one go.
+The fallback HealthCheck screen also exposes a "Try grant via root" Fix
+button on the brightness/timeout row if the grant ever gets dropped.
+
+**Without root**, grant it once via `adb` after installing:
 
     adb shell pm grant io.hyacinth.hyacinth android.permission.WRITE_SECURE_SETTINGS
 

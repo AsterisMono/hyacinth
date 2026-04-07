@@ -10,6 +10,8 @@ import 'package:hyacinth/net/config_client.dart';
 import 'package:hyacinth/onboarding/onboarding_page.dart';
 import 'package:hyacinth/permissions/perm_manager.dart';
 import 'package:hyacinth/config/config_model.dart';
+import 'package:hyacinth/system/root_helper.dart';
+import 'package:hyacinth/system/secure_settings.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -53,11 +55,39 @@ class _StubConfigClient extends ConfigClient {
   }
 }
 
+class _GreenSecureSettings extends SecureSettings {
+  _GreenSecureSettings() : super();
+  @override
+  Future<bool> hasPermission() async => true;
+}
+
+class _FakeRootHelper extends RootHelper {
+  _FakeRootHelper({
+    this.summary = const RootGrantSummary(
+      rootAvailable: false,
+      writeSecureSettings: false,
+      postNotifications: false,
+      batteryOpt: false,
+    ),
+  }) : super();
+  RootGrantSummary summary;
+  int autoGrantCalls = 0;
+  @override
+  Future<bool> hasRoot() async => summary.rootAvailable;
+  @override
+  Future<RootGrantSummary> autoGrantAll() async {
+    autoGrantCalls++;
+    return summary;
+  }
+}
+
 HealthCheck _greenHealthCheck() => HealthCheck(
       store: ConfigStore(),
       perms: _FakePerms(),
       httpClient:
           MockClient((req) async => http.Response('{"ok":true}', 200)),
+      secureSettings: _GreenSecureSettings(),
+      rootHelper: _FakeRootHelper(),
     );
 
 void main() {
@@ -70,7 +100,9 @@ void main() {
   testWidgets('renders the explain step first', (tester) async {
     final state = AppState();
     await tester.pumpWidget(
-      MaterialApp(home: OnboardingPage(appState: state)),
+      MaterialApp(
+        home: OnboardingPage(appState: state, root: _FakeRootHelper()),
+      ),
     );
     await tester.pump();
 
@@ -99,6 +131,7 @@ void main() {
           appState: state,
           perms: perms,
           store: store,
+          root: _FakeRootHelper(),
         ),
       ),
     );
@@ -109,17 +142,22 @@ void main() {
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
 
-    // Step 2: notifications
+    // Step 2: root → Skip
+    expect(find.text('Root access (optional)'), findsOneWidget);
+    await tester.tap(find.text('Skip'));
+    await tester.pumpAndSettle();
+
+    // Step 3: notifications
     expect(find.text('Notifications permission'), findsOneWidget);
     await tester.tap(find.text('Skip'));
     await tester.pumpAndSettle();
 
-    // Step 3: battery
+    // Step 4: battery
     expect(find.text('Battery optimization exemption'), findsOneWidget);
     await tester.tap(find.text('Skip'));
     await tester.pumpAndSettle();
 
-    // Step 4: server URL
+    // Step 5: server URL
     expect(find.text('Server URL'), findsWidgets);
     await tester.enterText(
       find.byType(TextField),
@@ -143,12 +181,15 @@ void main() {
         home: OnboardingPage(
           appState: state,
           perms: perms,
+          root: _FakeRootHelper(),
         ),
       ),
     );
     await tester.pump();
-    // Advance to notifications step.
+    // Advance through Welcome → Root → Notifications.
     await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Skip')); // root
     await tester.pumpAndSettle();
     await tester.tap(find.text('Grant'));
     await tester.pumpAndSettle();
@@ -166,7 +207,11 @@ void main() {
     final state = AppState();
     await tester.pumpWidget(
       MaterialApp(
-        home: OnboardingPage(appState: state, perms: _FakePerms()),
+        home: OnboardingPage(
+          appState: state,
+          perms: _FakePerms(),
+          root: _FakeRootHelper(),
+        ),
       ),
     );
     await tester.pump();
@@ -203,16 +248,19 @@ void main() {
           appState: state,
           perms: _FakePerms(),
           store: store,
+          root: _FakeRootHelper(),
         ),
       ),
     );
     await tester.pump();
-    // Skip to last step.
+    // Skip to last step (Welcome → Root → Notifications → Battery → URL).
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Skip'));
+    await tester.tap(find.text('Skip')); // root
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Skip'));
+    await tester.tap(find.text('Skip')); // notifications
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Skip')); // battery
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField), 'not-a-url');
@@ -221,6 +269,157 @@ void main() {
     expect(find.textContaining('http://'), findsWidgets);
     // Store should NOT have been written.
     expect(await store.loadServerUrl(), isNull);
+    state.dispose();
+  });
+
+  // ── M8.1: root-based self-grant flow ────────────────────────────────────
+
+  testWidgets('rooted path: all grants land → wizard skips notifs + battery',
+      (tester) async {
+    final perms = _FakePerms();
+    final store = ConfigStore();
+    final state = AppState();
+    final root = _FakeRootHelper(
+      summary: const RootGrantSummary(
+        rootAvailable: true,
+        writeSecureSettings: true,
+        postNotifications: true,
+        batteryOpt: true,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OnboardingPage(
+          appState: state,
+          perms: perms,
+          store: store,
+          root: root,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    // Welcome → Continue
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+
+    // Root step: tap "Check for root and grant".
+    expect(find.text('Root access (optional)'), findsOneWidget);
+    await tester.tap(find.text('Check for root and grant'));
+    await tester.pumpAndSettle();
+    expect(root.autoGrantCalls, 1);
+    // Three M8.1 grants should each render a "Granted" status label.
+    expect(find.text('Granted'), findsNWidgets(4));
+    // Persisted to ConfigStore.
+    expect(await store.getRootChecked(), isTrue);
+    expect(await store.getRootAvailable(), isTrue);
+
+    // Continue from root step.
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+
+    // Should jump straight to Server URL — notifications + battery skipped.
+    expect(find.text('Notifications permission'), findsNothing);
+    expect(find.text('Battery optimization exemption'), findsNothing);
+    expect(find.text('Server URL'), findsWidgets);
+    // Caption about adb pm grant should be hidden when WSS landed via root.
+    expect(find.textContaining('via adb'), findsNothing);
+
+    state.dispose();
+  });
+
+  testWidgets('rooted partial: battery skipped, notifications still shown',
+      (tester) async {
+    final state = AppState();
+    final root = _FakeRootHelper(
+      summary: const RootGrantSummary(
+        rootAvailable: true,
+        writeSecureSettings: true,
+        postNotifications: false,
+        batteryOpt: true,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OnboardingPage(
+          appState: state,
+          perms: _FakePerms(),
+          store: ConfigStore(),
+          root: root,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Check for root and grant'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+
+    // Notifications must still be shown.
+    expect(find.text('Notifications permission'), findsOneWidget);
+    // But battery was granted via root → step is gone from the wizard.
+    // Drive past notifications and confirm we land on Server URL, not battery.
+    await tester.tap(find.text('Skip'));
+    await tester.pumpAndSettle();
+    expect(find.text('Battery optimization exemption'), findsNothing);
+    expect(find.text('Server URL'), findsWidgets);
+
+    state.dispose();
+  });
+
+  testWidgets('non-rooted path: probe runs, wizard advances to notifications',
+      (tester) async {
+    final state = AppState();
+    final root = _FakeRootHelper(); // default summary: all false
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OnboardingPage(
+          appState: state,
+          perms: _FakePerms(),
+          store: ConfigStore(),
+          root: root,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Check for root and grant'));
+    await tester.pumpAndSettle();
+    expect(root.autoGrantCalls, 1);
+    // The summary list rendered the "Not available" hint.
+    expect(find.textContaining('Root not detected'), findsOneWidget);
+
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    // Notifications step is the next visible page.
+    expect(find.text('Notifications permission'), findsOneWidget);
+    state.dispose();
+  });
+
+  testWidgets('skip-root path: helper is never invoked', (tester) async {
+    final state = AppState();
+    final root = _FakeRootHelper();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OnboardingPage(
+          appState: state,
+          perms: _FakePerms(),
+          store: ConfigStore(),
+          root: root,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(find.text('Root access (optional)'), findsOneWidget);
+    await tester.tap(find.text('Skip'));
+    await tester.pumpAndSettle();
+    expect(root.autoGrantCalls, 0);
+    expect(find.text('Notifications permission'), findsOneWidget);
     state.dispose();
   });
 }

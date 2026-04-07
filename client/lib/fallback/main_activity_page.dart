@@ -5,6 +5,7 @@ import '../config/config_store.dart';
 import '../system/window_size.dart';
 import 'health_check.dart';
 import 'settings_page.dart';
+// RootGrantFailed lives in health_check.dart.
 
 /// Always-visible recovery UI shown whenever the app is not in
 /// [AppPhase.displaying]. The plan names this `MainActivity` because it's
@@ -62,7 +63,15 @@ class _MainActivityPageState extends State<MainActivityPage> {
   }
 
   Future<void> _runFix(Future<void> Function() fix) async {
-    await fix();
+    try {
+      await fix();
+    } on RootGrantFailed catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+    }
     await _refresh();
     await widget.appState.recheckPermissions();
   }
