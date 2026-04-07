@@ -5,9 +5,14 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../config/config_store.dart';
 import '../permissions/perm_manager.dart';
+import '../resource_pack/wifi_guard.dart';
 
 /// Outcome of a single [HealthCheck] row.
-enum CheckStatus { ok, fail, unknown }
+///
+/// `warn` is a soft failure — the row renders in amber and doesn't block
+/// the connect flow. Introduced in M5 for the "on mobile data" case: the
+/// app still works off a cached pack but new downloads are deferred.
+enum CheckStatus { ok, warn, fail, unknown }
 
 /// A single row in the fallback HealthCheck list.
 ///
@@ -50,15 +55,18 @@ class HealthCheck {
     ConfigStore? store,
     PermManager? perms,
     http.Client? httpClient,
+    WifiGuard? wifiGuard,
   })  : _store = store ?? ConfigStore(),
         _perms = perms ?? const PermManager(),
-        _http = httpClient ?? http.Client();
+        _http = httpClient ?? http.Client(),
+        _wifiGuard = wifiGuard ?? WifiGuard();
 
   static const Duration _pingTimeout = Duration(seconds: 3);
 
   final ConfigStore _store;
   final PermManager _perms;
   final http.Client _http;
+  final WifiGuard _wifiGuard;
 
   Future<HealthReport> run() async {
     final results = <CheckResult>[];
@@ -83,8 +91,36 @@ class HealthCheck {
 
     results.add(await _notificationCheck());
     results.add(await _batteryCheck());
+    results.add(await _wifiCheck());
 
     return HealthReport(results);
+  }
+
+  /// Wi-Fi connectivity row. Soft warning when off Wi-Fi (cached packs
+  /// keep working, but new downloads are deferred). Never blocks the
+  /// connect flow — see [HealthReport.allOk] semantics.
+  Future<CheckResult> _wifiCheck() async {
+    try {
+      final onWifi = await _wifiGuard.isOnWifi();
+      if (onWifi) {
+        return const CheckResult(
+          name: 'Wi-Fi',
+          status: CheckStatus.ok,
+          message: 'Connected',
+        );
+      }
+      return const CheckResult(
+        name: 'Wi-Fi',
+        status: CheckStatus.warn,
+        message: 'Not on Wi-Fi — pack downloads deferred until reconnected.',
+      );
+    } catch (e) {
+      return CheckResult(
+        name: 'Wi-Fi',
+        status: CheckStatus.warn,
+        message: 'Connectivity check failed: $e',
+      );
+    }
   }
 
   Future<CheckResult> _pingServer(String baseUrl) async {

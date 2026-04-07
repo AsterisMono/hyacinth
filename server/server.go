@@ -54,15 +54,23 @@ type wsEnvelope struct {
 // hyacinthServer owns the mutable config + the set of connected WS clients.
 // The two mutexes are deliberately separate: a slow WS write must not block
 // `GET /config`, and a `PUT /config` should not be held up by a stuck client.
+//
+// `packsMu` serializes the entire pack-mutation pipeline (POST/DELETE) so
+// the `data/packs/index.json` rewrite is race-free against concurrent
+// uploads. Reads (GET) take it as well — the contention is negligible at
+// LAN scale and it keeps the model simple.
 type hyacinthServer struct {
 	cfgMu  sync.RWMutex
 	config Config
 
 	connsMu sync.Mutex
 	conns   map[*websocket.Conn]struct{}
+
+	dataDir string
+	packsMu sync.Mutex
 }
 
-func newServer() *hyacinthServer {
+func newServer(dataDir string) *hyacinthServer {
 	return &hyacinthServer{
 		config: Config{
 			Content:         "https://example.com",
@@ -70,7 +78,8 @@ func newServer() *hyacinthServer {
 			Brightness:      json.RawMessage(`"auto"`),
 			ScreenTimeout:   json.RawMessage(`"always-on"`),
 		},
-		conns: make(map[*websocket.Conn]struct{}),
+		conns:   make(map[*websocket.Conn]struct{}),
+		dataDir: dataDir,
 	}
 }
 
@@ -229,7 +238,7 @@ func (s *hyacinthServer) handleWS(w http.ResponseWriter, r *http.Request) {
 // port. Keep route registration here and only here so the test surface
 // stays accurate.
 func newMux() *http.ServeMux {
-	srv := newServer()
+	srv := newServer("./data")
 	return newMuxFor(srv)
 }
 
@@ -241,6 +250,8 @@ func newMuxFor(srv *hyacinthServer) *http.ServeMux {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
+	mux.HandleFunc("/packs", srv.handlePacks)
+	mux.HandleFunc("/packs/", srv.handlePackByID)
 	mux.HandleFunc("/", srv.handleIndex)
 	return mux
 }
@@ -521,10 +532,23 @@ const indexHTML = `<!DOCTYPE html>
 
   <section class="card">
     <h2>Resource Packs</h2>
-    <md-list>
+    <div class="row" style="flex-wrap:wrap;gap:8px;">
+      <md-outlined-text-field id="pack-id" label="Pack ID (slug)" style="flex:1;min-width:140px;"></md-outlined-text-field>
+      <md-outlined-select id="pack-type" label="Type" style="flex:0 0 140px;">
+        <md-select-option value="png" selected><div slot="headline">png</div></md-select-option>
+        <md-select-option value="jpg"><div slot="headline">jpg</div></md-select-option>
+        <md-select-option value="webp"><div slot="headline">webp</div></md-select-option>
+        <md-select-option value="gif"><div slot="headline">gif</div></md-select-option>
+      </md-outlined-select>
+    </div>
+    <input type="file" id="pack-file" accept="image/png,image/jpeg,image/webp,image/gif" />
+    <div class="actions">
+      <md-filled-button id="pack-upload-btn">Upload</md-filled-button>
+    </div>
+    <md-list id="pack-list">
       <md-list-item disabled>
-        <div slot="headline">Coming in M5</div>
-        <div slot="supporting-text">Pack upload, listing, and selection arrive in a later milestone.</div>
+        <div slot="headline">No packs yet</div>
+        <div slot="supporting-text">Upload an image above to get started.</div>
       </md-list-item>
     </md-list>
   </section>
@@ -708,16 +732,122 @@ const indexHTML = `<!DOCTYPE html>
     if (lastServerCfg) applyConfigToForm(lastServerCfg);
   });
 
+  // ----- Resource Packs (M5) -----
+  const packIdField   = $('pack-id');
+  const packTypeSel   = $('pack-type');
+  const packFileInput = $('pack-file');
+  const packUploadBtn = $('pack-upload-btn');
+  const packListEl    = $('pack-list');
+
+  function humanSize(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KiB';
+    return (n / (1024 * 1024)).toFixed(2) + ' MiB';
+  }
+
+  function packSchemeUrl(p) {
+    return 'app-scheme://pack/' + p.id + '/' + p.filename;
+  }
+
+  async function loadPackList() {
+    try {
+      const r = await fetch('/packs');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const arr = await r.json();
+      renderPackList(arr || []);
+    } catch (e) {
+      toast('Pack list failed: ' + e.message, true);
+    }
+  }
+
+  function renderPackList(packs) {
+    packListEl.innerHTML = '';
+    if (packs.length === 0) {
+      const item = document.createElement('md-list-item');
+      item.setAttribute('disabled', '');
+      const h = document.createElement('div'); h.setAttribute('slot', 'headline'); h.textContent = 'No packs yet';
+      const s = document.createElement('div'); s.setAttribute('slot', 'supporting-text'); s.textContent = 'Upload an image above to get started.';
+      item.appendChild(h); item.appendChild(s);
+      packListEl.appendChild(item);
+      return;
+    }
+    for (const p of packs) {
+      const item = document.createElement('md-list-item');
+      const h = document.createElement('div');
+      h.setAttribute('slot', 'headline');
+      h.textContent = p.id + '  v' + p.version + '  (' + p.type + ')';
+      const s = document.createElement('div');
+      s.setAttribute('slot', 'supporting-text');
+      s.textContent = humanSize(p.size) + '  ·  ' + p.createdAt;
+      const trailing = document.createElement('div');
+      trailing.setAttribute('slot', 'end');
+      trailing.style.display = 'flex';
+      trailing.style.gap = '4px';
+      const useBtn = document.createElement('md-text-button');
+      useBtn.textContent = 'Use as content';
+      useBtn.addEventListener('click', () => {
+        contentField.value = packSchemeUrl(p);
+        markDirty();
+        toast('Set content URL — click Save to push.');
+      });
+      const delBtn = document.createElement('md-text-button');
+      delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', async () => {
+        if (!confirm('Delete pack "' + p.id + '"?')) return;
+        try {
+          const r = await fetch('/packs/' + encodeURIComponent(p.id), {method: 'DELETE'});
+          if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
+          toast('Deleted ' + p.id);
+          loadPackList();
+        } catch (e) {
+          toast('Delete failed: ' + e.message, true);
+        }
+      });
+      trailing.appendChild(useBtn);
+      trailing.appendChild(delBtn);
+      item.appendChild(h);
+      item.appendChild(s);
+      item.appendChild(trailing);
+      packListEl.appendChild(item);
+    }
+  }
+
+  packUploadBtn.addEventListener('click', async () => {
+    const id = (packIdField.value || '').trim();
+    const type = packTypeSel.value || 'png';
+    const file = packFileInput.files && packFileInput.files[0];
+    if (!id) { toast('Enter a pack id', true); return; }
+    if (!file) { toast('Choose a file', true); return; }
+    packUploadBtn.disabled = true;
+    try {
+      const fd = new FormData();
+      fd.append('id', id);
+      fd.append('type', type);
+      fd.append('file', file);
+      const r = await fetch('/packs', {method: 'POST', body: fd});
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()));
+      toast('Uploaded ' + id);
+      packIdField.value = '';
+      packFileInput.value = '';
+      loadPackList();
+    } catch (e) {
+      toast('Upload failed: ' + e.message, true);
+    } finally {
+      packUploadBtn.disabled = false;
+    }
+  });
+
   // ----- Boot -----
-  loadInitial().then(connectWS);
+  loadInitial().then(loadPackList).then(connectWS);
 </script>
 </body>
 </html>
 `
 
 func main() {
+	srv := newServer("./data")
 	log.Printf("hyacinth server listening on %s", listenAddr)
-	if err := http.ListenAndServe(listenAddr, newMux()); err != nil {
+	if err := http.ListenAndServe(listenAddr, newMuxFor(srv)); err != nil {
 		log.Fatal(err)
 	}
 }

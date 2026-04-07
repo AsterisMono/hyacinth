@@ -5,6 +5,7 @@
 // 200 for /health. SharedPreferences is replaced with setMockInitialValues.
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -16,6 +17,10 @@ import 'package:hyacinth/fallback/health_check.dart';
 import 'package:hyacinth/net/config_client.dart';
 import 'package:hyacinth/net/ws_client.dart';
 import 'package:hyacinth/permissions/perm_manager.dart';
+import 'package:hyacinth/resource_pack/pack_cache.dart';
+import 'package:hyacinth/resource_pack/pack_manager.dart';
+import 'package:hyacinth/resource_pack/pack_manifest.dart';
+import 'package:hyacinth/resource_pack/wifi_guard.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -44,6 +49,58 @@ class _OkConfigClient extends ConfigClient {
       screenTimeout: 'always-on',
     );
   }
+}
+
+class _PackConfigClient extends ConfigClient {
+  _PackConfigClient(this._cfg) : super(httpClient: MockClient((_) async {
+          throw StateError('should not be called');
+        }));
+  final HyacinthConfig _cfg;
+  @override
+  Future<HyacinthConfig> fetch(String serverBaseUrl) async => _cfg;
+}
+
+/// Subclass of [PackManager] whose ensure() is fully driven by the test —
+/// no real cache, no real network. Records every call.
+class _FakePackManager extends PackManager {
+  _FakePackManager({
+    this.fail = false,
+  }) : super(
+          serverBaseUrl: 'http://unused',
+          cache: PackCache(overrideRoot: Directory.systemTemp),
+          wifiGuard: _NopWifi(),
+          httpClient: MockClient((_) async {
+            throw StateError('should not be called');
+          }),
+        );
+
+  bool fail;
+  final List<String> calls = <String>[];
+
+  @override
+  Future<PackManifest> ensure(String packId) async {
+    calls.add(packId);
+    if (fail) {
+      throw PackUnavailable('forced failure for tests');
+    }
+    return PackManifest(
+      id: packId,
+      version: 1,
+      type: 'png',
+      filename: 'image.png',
+      sha256: 'h',
+      size: 0,
+      createdAt: 't',
+    );
+  }
+}
+
+class _NopWifi extends WifiGuard {
+  _NopWifi() : super();
+  @override
+  Future<bool> isOnWifi() async => true;
+  @override
+  Stream<bool> onWifiChanged() => const Stream.empty();
 }
 
 /// A fake PermManager that reports everything as granted so the HealthCheck
@@ -354,6 +411,79 @@ void main() {
       final ws = created.single;
       state.dispose();
       expect(ws.isDisposed, isTrue);
+    });
+  });
+
+  group('M5 resource pack hookup', () {
+    const packCfg = HyacinthConfig(
+      content: 'app-scheme://pack/neko/image.png',
+      contentRevision: 'r1',
+      brightness: 'auto',
+      screenTimeout: 'always-on',
+    );
+
+    test('start() with pack content awaits ensure() before displaying',
+        () async {
+      final fake = _FakePackManager();
+      final state = AppState(
+        store: ConfigStore(),
+        client: _PackConfigClient(packCfg),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        packManagerFactory: (_) => fake,
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.displaying);
+      expect(fake.calls, <String>['neko']);
+      expect(state.config?.content,
+          'app-scheme://pack/neko/image.png');
+      state.dispose();
+    });
+
+    test('start() with pack content goes to fallback when ensure() throws',
+        () async {
+      final fake = _FakePackManager(fail: true);
+      final state = AppState(
+        store: ConfigStore(),
+        client: _PackConfigClient(packCfg),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        packManagerFactory: (_) => fake,
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.fallback);
+      expect(state.error, contains('PackUnavailable'));
+      expect(fake.calls, <String>['neko']);
+      state.dispose();
+    });
+
+    test('start() with https content does NOT call ensure()', () async {
+      final fake = _FakePackManager();
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        packManagerFactory: (_) => fake,
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.displaying);
+      expect(fake.calls, isEmpty);
+      state.dispose();
+    });
+
+    test('extractPackIdFromContent parses app-scheme URLs', () {
+      expect(extractPackIdFromContent('https://example.com'), isNull);
+      expect(
+          extractPackIdFromContent('app-scheme://pack/neko/image.png'), 'neko');
+      expect(
+          extractPackIdFromContent('app-scheme://pack/foo-bar/sub/file.png'),
+          'foo-bar');
+      expect(extractPackIdFromContent('app-scheme://other/x'), isNull);
+      expect(extractPackIdFromContent(''), isNull);
     });
   });
 

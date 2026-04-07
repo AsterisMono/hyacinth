@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+import '../resource_pack/pack_cache.dart';
+import '../resource_pack/scheme_handler.dart';
+
 /// Optional override for the inner widget tree. Tests inject a stub builder
 /// that returns a plain `Container` so the WebView's reload guard can be
 /// driven without bringing up the platform view layer (which doesn't work
@@ -22,10 +25,25 @@ void debugSetWebViewBuilder(WebViewBuilder? builder) {
 /// Thin wrapper around [InAppWebView] configured for Hyacinth's display use
 /// case: fullscreen, no zoom controls, JavaScript enabled, media autoplay
 /// without a user gesture.
+///
+/// **M5**: declares `app-scheme` as a custom resource scheme and routes
+/// requests through [resolveAppScheme] so URLs of the form
+/// `app-scheme://pack/<id>/<file>` resolve out of the local [PackCache]
+/// without ever touching the network.
 class HyacinthWebView extends StatelessWidget {
-  const HyacinthWebView({super.key, required this.url});
+  const HyacinthWebView({
+    super.key,
+    required this.url,
+    this.packCache,
+  });
 
   final String url;
+
+  /// Optional pack cache used by the `app-scheme://` resolver. Production
+  /// passes the singleton from [DisplayPage]; tests can pass a temp-dir
+  /// backed cache or omit it entirely (the resolver simply returns null
+  /// for every request and the WebView falls through to its default).
+  final PackCache? packCache;
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +62,13 @@ class HyacinthWebView extends StatelessWidget {
         builtInZoomControls: false,
         javaScriptEnabled: true,
         domStorageEnabled: true,
+        resourceCustomSchemes: const ['app-scheme'],
       ),
+      onLoadResourceWithCustomScheme: (controller, request) async {
+        final cache = packCache;
+        if (cache == null) return null;
+        return resolveAppScheme(request, cache);
+      },
     );
   }
 }

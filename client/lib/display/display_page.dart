@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../config/config_model.dart';
+import '../resource_pack/pack_cache.dart';
 import 'webview_controller.dart';
 
 /// Top-level fullscreen display surface.
@@ -21,9 +22,14 @@ class DisplayPage extends StatefulWidget {
   const DisplayPage({
     super.key,
     required this.config,
+    this.packCache,
   });
 
   final HyacinthConfig config;
+
+  /// Pack cache used by the WebView's `app-scheme://` resolver. Optional
+  /// — when null, only `https://` content URLs work.
+  final PackCache? packCache;
 
   @override
   State<DisplayPage> createState() => _DisplayPageState();
@@ -49,7 +55,10 @@ class _DisplayPageState extends State<DisplayPage>
     WidgetsBinding.instance.addObserver(this);
     _enterImmersive();
     WakelockPlus.enable();
-    _webView = HyacinthWebView(url: widget.config.content);
+    _webView = HyacinthWebView(
+      url: widget.config.content,
+      packCache: widget.packCache,
+    );
   }
 
   @override
@@ -71,6 +80,7 @@ class _DisplayPageState extends State<DisplayPage>
           '${widget.config.content}#${widget.config.contentRevision}',
         ),
         url: widget.config.content,
+        packCache: widget.packCache,
       );
     }
   }

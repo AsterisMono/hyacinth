@@ -54,7 +54,7 @@ func TestGetHealthReturnsOK(t *testing.T) {
 
 // PUT with new content bumps the revision and returns the stored config.
 func TestPutConfigBumpsRevisionWhenContentChanges(t *testing.T) {
-	srv := newServer()
+	srv := newServer(t.TempDir())
 	mux := newMuxFor(srv)
 	prevRev := srv.snapshot().ContentRevision
 
@@ -90,7 +90,7 @@ func TestPutConfigBumpsRevisionWhenContentChanges(t *testing.T) {
 // PUT that only changes brightness MUST NOT bump the content revision —
 // this is the server-side half of the M3 reload guard.
 func TestPutConfigDoesNotBumpRevisionWhenContentUnchanged(t *testing.T) {
-	srv := newServer()
+	srv := newServer(t.TempDir())
 	mux := newMuxFor(srv)
 	initial := srv.snapshot()
 
@@ -201,7 +201,7 @@ func TestGetIndexHasNoStoreCache(t *testing.T) {
 // then trigger a PUT /config from the test and assert the WS client receives
 // the second config_update envelope.
 func TestWebSocketBroadcastsOnPut(t *testing.T) {
-	srv := newServer()
+	srv := newServer(t.TempDir())
 	ts := httptest.NewServer(newMuxFor(srv))
 	defer ts.Close()
 
@@ -261,7 +261,7 @@ func TestWebSocketBroadcastsOnPut(t *testing.T) {
 
 // `ping` envelopes get a `pong` reply.
 func TestWebSocketPingPong(t *testing.T) {
-	srv := newServer()
+	srv := newServer(t.TempDir())
 	ts := httptest.NewServer(newMuxFor(srv))
 	defer ts.Close()
 

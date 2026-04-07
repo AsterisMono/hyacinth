@@ -245,6 +245,10 @@ class _MainActivityPageState extends State<MainActivityPage> {
       case CheckStatus.fail:
         dot = scheme.error;
         break;
+      case CheckStatus.warn:
+        // Amber warning — soft status, doesn't block the connect flow.
+        dot = const Color(0xFFF9A825);
+        break;
       case CheckStatus.unknown:
         dot = scheme.tertiary;
         break;

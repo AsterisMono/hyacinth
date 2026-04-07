@@ -95,7 +95,10 @@ class _HyacinthAppState extends State<HyacinthApp> with WidgetsBindingObserver {
                 case AppPhase.fallback:
                   return MainActivityPage(appState: _appState);
                 case AppPhase.displaying:
-                  return DisplayPage(config: _appState.config!);
+                  return DisplayPage(
+                    config: _appState.config!,
+                    packCache: _appState.packCache,
+                  );
               }
             },
           ),
