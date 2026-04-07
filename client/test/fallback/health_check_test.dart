@@ -49,14 +49,12 @@ void main() {
         ),
       );
       final report = await hc.run();
-      // The home-role check is intentionally `unknown`, so allOk is false.
-      // We assert each non-home check individually.
-      expect(report.checks.length, 5);
+      expect(report.checks.length, 4);
       expect(report.checks[0].status, CheckStatus.ok); // url set
       expect(report.checks[1].status, CheckStatus.ok); // server reachable
       expect(report.checks[2].status, CheckStatus.ok); // notifications
       expect(report.checks[3].status, CheckStatus.ok); // battery
-      expect(report.checks[4].status, CheckStatus.unknown); // home role
+      expect(report.allOk, isTrue);
     });
 
     test('500 from /health → red row with status code in message', () async {

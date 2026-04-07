@@ -1,6 +1,5 @@
 // Widget tests for the onboarding wizard. Drive every step end-to-end with
-// a fake PermManager (so no platform-channel calls fire) and a fake home
-// settings launcher.
+// a fake PermManager (so no platform-channel calls fire).
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -86,7 +85,6 @@ void main() {
 
   testWidgets('walks through every step and saves the URL', (tester) async {
     final perms = _FakePerms();
-    var openHomeCalls = 0;
     final store = ConfigStore();
     final state = AppState(
       store: store,
@@ -101,9 +99,6 @@ void main() {
           appState: state,
           perms: perms,
           store: store,
-          onOpenHomeSettings: () async {
-            openHomeCalls++;
-          },
         ),
       ),
     );
@@ -124,15 +119,7 @@ void main() {
     await tester.tap(find.text('Skip'));
     await tester.pumpAndSettle();
 
-    // Step 4: home role
-    expect(find.text('Pick Hyacinth as your Home app'), findsOneWidget);
-    await tester.tap(find.text('Open'));
-    await tester.pumpAndSettle();
-    expect(openHomeCalls, 1);
-    await tester.tap(find.text('I picked it'));
-    await tester.pumpAndSettle();
-
-    // Step 5: server URL
+    // Step 4: server URL
     expect(find.text('Server URL'), findsWidgets);
     await tester.enterText(
       find.byType(TextField),
@@ -178,7 +165,6 @@ void main() {
           appState: state,
           perms: _FakePerms(),
           store: store,
-          onOpenHomeSettings: () async {},
         ),
       ),
     );
@@ -189,8 +175,6 @@ void main() {
     await tester.tap(find.text('Skip'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Skip'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('I picked it'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField), 'not-a-url');

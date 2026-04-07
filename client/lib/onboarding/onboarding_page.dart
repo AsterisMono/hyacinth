@@ -1,31 +1,22 @@
-import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../config/config_store.dart';
 import '../permissions/perm_manager.dart';
 
-/// Default home-settings launcher used in production. Lifted out of the
-/// widget so tests can swap it for a no-op closure.
-Future<void> defaultOpenHomeSettings() async {
-  const intent = AndroidIntent(action: 'android.settings.HOME_SETTINGS');
-  await intent.launch();
-}
-
 /// First-run wizard.
 ///
-/// Steps (in order): explain → notifications → battery opt → home role →
-/// server URL. All permission steps are skippable but warn; the user lands
-/// in fallback if they skip something that later matters. The final step
-/// saves the server URL, marks onboarding complete, and asks [AppState]
-/// to transition into the connect flow.
+/// Steps (in order): explain → notifications → battery opt → server URL.
+/// All permission steps are skippable but warn; the user lands in fallback
+/// if they skip something that later matters. The final step saves the
+/// server URL, marks onboarding complete, and asks [AppState] to transition
+/// into the connect flow.
 class OnboardingPage extends StatefulWidget {
   const OnboardingPage({
     super.key,
     required this.appState,
     this.perms = const PermManager(),
     this.store,
-    this.onOpenHomeSettings = defaultOpenHomeSettings,
   });
 
   final AppState appState;
@@ -38,10 +29,6 @@ class OnboardingPage extends StatefulWidget {
   /// landed.
   final ConfigStore? store;
 
-  /// Hook for the "Open Home settings" button. Defaults to firing the
-  /// `HOME_SETTINGS` intent; tests pass an in-memory recorder.
-  final Future<void> Function() onOpenHomeSettings;
-
   @override
   State<OnboardingPage> createState() => _OnboardingPageState();
 }
@@ -52,7 +39,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
       TextEditingController(text: defaultServerUrl);
   int _step = 0;
   String? _urlError;
-  static const int _stepCount = 5;
+  static const int _stepCount = 4;
 
   @override
   void dispose() {
@@ -107,7 +94,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
                 _explainStep(),
                 _notificationsStep(),
                 _batteryStep(),
-                _homeRoleStep(),
                 _serverUrlStep(),
               ],
             ),
@@ -246,26 +232,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
             _next();
           },
           child: const Text('Grant'),
-        ),
-      ],
-    );
-  }
-
-  Widget _homeRoleStep() {
-    return _heroStep(
-      icon: Icons.home_outlined,
-      title: 'Pick Hyacinth as your Home app',
-      body: 'So pressing Home always returns to the display, select Hyacinth '
-          'as the default launcher in the Android "Home app" settings. '
-          'Tap Open, pick Hyacinth, then come back and tap "I picked it".',
-      actions: [
-        TextButton(
-          onPressed: () => widget.onOpenHomeSettings(),
-          child: const Text('Open'),
-        ),
-        FilledButton(
-          onPressed: _next,
-          child: const Text('I picked it'),
         ),
       ],
     );

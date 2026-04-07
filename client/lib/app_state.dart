@@ -103,39 +103,6 @@ class AppState extends ChangeNotifier {
     _startFallbackTimer();
   }
 
-  /// User pressed Home (or otherwise asked for the main activity).
-  /// Transitions to `fallback` WITHOUT setting an error and WITHOUT
-  /// clearing the cached config. The "Return to content" button on
-  /// MainActivityPage stays enabled because `_config` is preserved.
-  ///
-  /// Leaving `displaying` routes through `_setPhase`, which disconnects
-  /// the live `WsClient`. The status footer reads "Fallback" but with no
-  /// error message — which is the intended "user-initiated rest state".
-  void requestMainActivity() {
-    if (_phase == AppPhase.fallback) return;
-    _error = null;
-    _setPhase(AppPhase.fallback);
-  }
-
-  /// Transition back to displaying the cached content. No-op if no
-  /// config is cached (the button on the page is hidden in that case).
-  ///
-  /// Reopens a fresh `WsClient` because `_setPhase` only tears down the
-  /// old one on the way OUT of displaying — there's no construct-on-enter
-  /// path inside `_setPhase`. We mirror what `_connect()` does at the end
-  /// of its happy path.
-  Future<void> returnToDisplaying() async {
-    if (_config == null) return;
-    if (_phase == AppPhase.displaying) return;
-    _error = null;
-    _cancelFallbackTimer();
-    final serverUrl = await _store.loadServerUrl();
-    if (serverUrl != null && serverUrl.trim().isNotEmpty) {
-      _openWsClient(serverUrl);
-    }
-    _setPhase(AppPhase.displaying);
-  }
-
   /// Re-runs the health checks on demand. If any previously-green check
   /// has regressed, flips into `fallback` (the "revoking a permission
   /// flips the UI" behaviour in the M2 verification steps).
@@ -156,8 +123,6 @@ class AppState extends ChangeNotifier {
       final report = await _healthCheck.run();
       _lastHealthReport = report;
       if (!report.allOk) {
-        // Home-role "unknown" shouldn't block connect on its own; only a
-        // hard fail does.
         final hardFail = report.checks.any(
           (c) => c.status == CheckStatus.fail,
         );

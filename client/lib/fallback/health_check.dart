@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:android_intent_plus/android_intent.dart';
 import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
 
@@ -46,8 +45,6 @@ class HealthReport {
 ///   * server reachable (`GET <base>/health`)
 ///   * notifications permission
 ///   * battery-optimisation exemption
-///   * home-launcher role (best-effort, reported as `unknown` — see note
-///     below on why there is no direct API for this in the public SDK)
 class HealthCheck {
   HealthCheck({
     ConfigStore? store,
@@ -86,7 +83,6 @@ class HealthCheck {
 
     results.add(await _notificationCheck());
     results.add(await _batteryCheck());
-    results.add(_homeRoleCheck());
 
     return HealthReport(results);
   }
@@ -141,22 +137,4 @@ class HealthCheck {
     );
   }
 
-  /// Home-launcher role: the public Flutter/Android SDK has no portable
-  /// "am I the default home?" query without dropping into platform code
-  /// (`RoleManager.isRoleHeld(ROLE_HOME)` on API 29+, or resolving the
-  /// default home activity). M2 scope explicitly leaves that to later, so
-  /// this check is reported as `unknown` and the Fix button just opens
-  /// the system "Home app" settings screen.
-  CheckResult _homeRoleCheck() {
-    return CheckResult(
-      name: 'Home launcher role',
-      status: CheckStatus.unknown,
-      message: 'Cannot be checked without platform code. Tap Fix to open '
-          'the Android "Default apps" settings and pick Hyacinth.',
-      fix: () async {
-        const intent = AndroidIntent(action: 'android.settings.HOME_SETTINGS');
-        await intent.launch();
-      },
-    );
-  }
 }
