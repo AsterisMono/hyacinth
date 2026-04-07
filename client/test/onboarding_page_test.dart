@@ -156,6 +156,44 @@ void main() {
     state.dispose();
   });
 
+  testWidgets('wizard content is constrained on wide landscape viewports',
+      (tester) async {
+    tester.view.physicalSize = const Size(2560, 1600);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final state = AppState();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OnboardingPage(appState: state, perms: _FakePerms()),
+      ),
+    );
+    await tester.pump();
+
+    // Find the ConstrainedBox inside the active step body. PageView builds
+    // all pages, so there will be several; all should be <= 560 + tolerance.
+    final constrained = find.byWidgetPredicate(
+      (w) =>
+          w is ConstrainedBox && w.constraints.maxWidth == 560,
+    );
+    expect(constrained, findsWidgets);
+
+    // Rendered width must not exceed 560 dp on the wide viewport.
+    for (final element in tester.elementList(constrained)) {
+      final size = element.size;
+      expect(size, isNotNull);
+      expect(size!.width, lessThanOrEqualTo(560.0));
+    }
+
+    // Baseline: the outer Scaffold is actually 1280 dp wide, confirming the
+    // viewport really is landscape-tablet-sized.
+    final scaffoldSize = tester.getSize(find.byType(Scaffold));
+    expect(scaffoldSize.width, greaterThan(1000));
+
+    state.dispose();
+  });
+
   testWidgets('rejects empty/invalid URL on save', (tester) async {
     final state = AppState();
     final store = ConfigStore();

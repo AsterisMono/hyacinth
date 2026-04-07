@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../config/config_store.dart';
+import '../system/window_size.dart';
 import 'health_check.dart';
 import 'settings_page.dart';
 
@@ -81,18 +82,64 @@ class _MainActivityPageState extends State<MainActivityPage> {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        children: [
-          _healthSection(),
-          SettingsBlock(
-            appState: widget.appState,
-            store: _store,
-          ),
-          _statusFooter(phase, error),
-          const SizedBox(height: 16),
-        ],
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final size = windowSizeFromWidth(constraints.maxWidth);
+          final body = size == WindowSizeClass.expanded
+              ? _expandedLayout(phase, error)
+              : _compactLayout(phase, error);
+          return SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1200),
+                child: body,
+              ),
+            ),
+          );
+        },
       ),
+    );
+  }
+
+  Widget _compactLayout(AppPhase phase, String? error) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _healthSection(),
+        SettingsBlock(
+          key: const Key('settingsCard'),
+          appState: widget.appState,
+          store: _store,
+        ),
+        _statusFooter(phase, error),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+
+  Widget _expandedLayout(AppPhase phase, String? error) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _statusFooter(phase, error),
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: _healthSection()),
+            const SizedBox(width: 16),
+            Expanded(
+              child: SettingsBlock(
+                key: const Key('settingsCard'),
+                appState: widget.appState,
+                store: _store,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+      ],
     );
   }
 
@@ -160,6 +207,7 @@ class _MainActivityPageState extends State<MainActivityPage> {
   Widget _healthSection() {
     final report = _report;
     return Card(
+      key: const Key('healthCheckCard'),
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Padding(
         padding: const EdgeInsets.all(16),

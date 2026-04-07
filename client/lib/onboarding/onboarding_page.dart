@@ -91,15 +91,32 @@ class _OnboardingPageState extends State<OnboardingPage> {
               controller: _pageController,
               physics: const NeverScrollableScrollPhysics(),
               children: [
-                _explainStep(),
-                _notificationsStep(),
-                _batteryStep(),
-                _serverUrlStep(),
+                _wrap(_explainStep()),
+                _wrap(_notificationsStep()),
+                _wrap(_batteryStep()),
+                _wrap(_serverUrlStep()),
               ],
             ),
           ),
-          _stepIndicator(),
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: _stepIndicator(),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  /// Constrains step content to a comfortable M3 reading width on
+  /// landscape tablets. Without this the wizard's hero icon and headline
+  /// look lost on a 1280dp-wide display.
+  Widget _wrap(Widget child) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: child,
       ),
     );
   }
