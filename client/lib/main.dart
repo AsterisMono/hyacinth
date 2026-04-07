@@ -1,5 +1,6 @@
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'app_state.dart';
 import 'display/display_page.dart';
@@ -24,6 +25,12 @@ class HyacinthApp extends StatefulWidget {
 }
 
 class _HyacinthAppState extends State<HyacinthApp> with WidgetsBindingObserver {
+  // Platform channel that the Android side pings whenever a HOME-category
+  // intent reaches MainActivity.onNewIntent. The contract (channel name +
+  // method name) MUST stay in sync with `MainActivity.kt`.
+  static const _homeIntentChannel =
+      MethodChannel('io.hyacinth/home_intent');
+
   late final AppState _appState;
 
   @override
@@ -31,6 +38,7 @@ class _HyacinthAppState extends State<HyacinthApp> with WidgetsBindingObserver {
     super.initState();
     _appState = AppState();
     WidgetsBinding.instance.addObserver(this);
+    _homeIntentChannel.setMethodCallHandler(_onHomeChannelCall);
     // Kick off the boot sequence after the first frame so that
     // `notifyListeners` during `start()` can safely rebuild the tree.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -40,9 +48,17 @@ class _HyacinthAppState extends State<HyacinthApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _homeIntentChannel.setMethodCallHandler(null);
     WidgetsBinding.instance.removeObserver(this);
     _appState.dispose();
     super.dispose();
+  }
+
+  Future<dynamic> _onHomeChannelCall(MethodCall call) async {
+    if (call.method == 'home_pressed') {
+      _appState.requestMainActivity();
+    }
+    return null;
   }
 
   @override

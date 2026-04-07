@@ -84,6 +84,7 @@ class _MainActivityPageState extends State<MainActivityPage> {
       body: ListView(
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
+          if (widget.appState.config != null) _returnToContentButton(),
           _healthSection(),
           SettingsBlock(
             appState: widget.appState,
@@ -152,6 +153,20 @@ class _MainActivityPageState extends State<MainActivityPage> {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _returnToContentButton() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          onPressed: () => widget.appState.returnToDisplaying(),
+          icon: const Icon(Icons.play_arrow_rounded),
+          label: const Text('Return to content'),
         ),
       ),
     );
