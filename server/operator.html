@@ -29,6 +29,9 @@
   :root {
     --hy-paper:       #F4F2DA;
     --hy-ink:         #1C3A1F;
+    /* M14.1: readable foreground for everything that used to take sage as
+       text color. ~6.7:1 against #F4F2DA — passes WCAG AA for normal text. */
+    --hy-ink-mid:     #4A5F3A;
     --hy-sage:        #7A8C6E;
     --hy-sage-bright: #6B7F5C;
     --hy-hairline:    #D8D5BC;
@@ -70,11 +73,23 @@
     --md-sys-color-on-error-container: #8C3A28;
 
     --md-outlined-text-field-container-color: transparent;
-    --md-outlined-text-field-outline-color: #D8D5BC;
+    /* M14.1: bump from #D8D5BC (near-invisible on cream) to a darker olive
+       so input field outlines are clearly discernible as containers. */
+    --md-outlined-text-field-outline-color: #A8B090;
     --md-outlined-text-field-focus-outline-color: #1C3A1F;
-    --md-outlined-text-field-label-text-color: #7A8C6E;
+    --md-outlined-text-field-label-text-color: var(--hy-ink-mid);
     --md-outlined-text-field-input-text-color: #1C3A1F;
+    /* M14.1: shrink the chunky default container. The select wraps an
+       md-outlined-field internally and reads the field-level tokens; the
+       text field has its own forwarding layer so we set the same shrink
+       there via a per-component rule below. */
+    --md-outlined-field-top-space: 8px;
+    --md-outlined-field-bottom-space: 8px;
+    --md-outlined-text-field-input-text-size: 16px;
+    --md-outlined-text-field-label-text-size: 14px;
     --md-outlined-select-text-field-container-color: transparent;
+    --md-outlined-select-text-field-input-text-size: 16px;
+    --md-outlined-select-text-field-label-text-size: 14px;
 
     --hy-status-good: #6B7F5C;
     --hy-status-bad:  #8C3A28;
@@ -90,8 +105,12 @@
     background: var(--hy-paper);
     color: var(--hy-ink);
     font-family: var(--hy-font-serif);
-    font-weight: 400;
-    font-size: 16px;
+    /* M14.1: bumped from 400 → 500 because Cormorant Garamond at 400 reads
+       genuinely thin in body text on cream — 500 is the readable floor. */
+    font-weight: 500;
+    /* M14.1: 16 → 19px. Cormorant Garamond has a small x-height; even at
+       19px it visually equates to a ~16px sans body. */
+    font-size: 19px;
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -115,6 +134,10 @@
   md-outlined-select {
     width: 100%;
   }
+  md-outlined-text-field {
+    --md-outlined-field-top-space: 8px;
+    --md-outlined-field-bottom-space: 8px;
+  }
 
   /* ----- Sticky status bar ----- */
   .status-bar {
@@ -133,11 +156,11 @@
     align-items: center;
     gap: 8px;
     font-family: var(--hy-font-serif);
-    font-size: 12px;
-    font-weight: 500;
+    font-size: 15px;
+    font-weight: 600;
     font-variant-caps: small-caps;
     letter-spacing: 0.08em;
-    color: var(--hy-sage);
+    color: var(--hy-ink-mid);
     white-space: nowrap;
   }
   .status-bar .host .dot {
@@ -150,35 +173,10 @@
   .status-bar.connected .host .dot {
     background: var(--hy-status-good);
   }
-  .status-bar .now-showing {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    justify-content: center;
-  }
-  .status-bar .now-showing .label {
-    font-family: var(--hy-font-serif);
-    font-style: italic;
-    font-weight: 400;
-    font-size: 13px;
-    font-variant-caps: small-caps;
-    letter-spacing: 0.05em;
-    color: var(--hy-sage);
-  }
-  .status-bar .now-showing .value {
-    font-family: var(--hy-font-serif);
-    font-style: italic;
-    font-weight: 400;
-    font-size: 14px;
-    color: var(--hy-ink);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 100%;
-  }
-  .status-bar .spacer { flex: 0 0 auto; }
+  /* M14.1: status-bar simplified to host + spacer + token icon. The
+     "Now showing <url>" caption moved to the page header (it never fit
+     comfortably on a phone in the sticky bar). */
+  .status-bar .status-spacer { flex: 1 1 auto; min-width: 8px; }
   .status-bar md-icon-button {
     --md-icon-button-icon-color: var(--hy-sage);
     --md-icon-button-hover-icon-color: var(--hy-ink);
@@ -206,16 +204,38 @@
     display: block;
     margin: 10px auto 6px auto;
     font-size: 16px;
-    color: var(--hy-sage);
+    color: var(--hy-ink-mid);
     letter-spacing: 0.4em;
   }
-  .page-header .subtitle {
-    margin-top: 4px;
+  /* M14.1: header "Now showing <url>" caption — replaces the old
+     localhost:8080 subtitle. Wraps onto a second line on phones; the
+     URL value can break anywhere so a long content URL doesn't push
+     the page wider than the viewport. */
+  .page-header .now-showing-header {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: center;
+    gap: 6px 12px;
     font-family: var(--hy-font-serif);
+    color: var(--hy-ink-mid);
+  }
+  .page-header .now-showing-header .label {
     font-style: italic;
-    font-weight: 400;
-    font-size: 14px;
-    color: var(--hy-sage);
+    font-weight: 600;
+    font-size: 15px;
+    font-variant-caps: small-caps;
+    letter-spacing: 0.05em;
+  }
+  .page-header .now-showing-header .value {
+    font-style: italic;
+    font-weight: 500;
+    font-size: 17px;
+    color: var(--hy-ink);
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-all;
   }
 
   /* ----- Grid of sections ----- */
@@ -267,12 +287,22 @@
     justify-content: space-between;
     gap: 12px;
     margin-bottom: 4px;
+    /* M14.1: pin a uniform line-box so the section-head height doesn't
+       drift between columns. The Display h2 uses ✦ (U+2726) and Packs
+       uses ❧ (U+2767) — those two ornament glyphs render at slightly
+       different vertical metrics in Cormorant Garamond, which made the
+       Display section-head 29.6px tall and Packs 32.8px tall, pushing
+       every row beneath them out of horizontal alignment. Locking
+       line-height fixes the row at 33.6px (24 * 1.4) regardless of
+       which glyph the h2 carries. */
+    line-height: 1.4;
+    min-height: calc(24px * 1.4);
   }
   .section h2 {
     margin: 0;
     font-family: var(--hy-font-serif);
-    font-weight: 500;
-    font-size: 20px;
+    font-weight: 600;
+    font-size: 24px;
     font-variant-caps: small-caps;
     letter-spacing: 0.08em;
     color: var(--hy-ink);
@@ -280,9 +310,9 @@
   .section h2 .glyph {
     display: inline-block;
     margin-right: 10px;
-    color: var(--hy-sage);
+    color: var(--hy-ink-mid);
     font-variant-caps: normal;
-    font-size: 14px;
+    font-size: 16px;
     vertical-align: baseline;
   }
 
@@ -298,15 +328,18 @@
   md-slider { flex: 1; }
   .actions {
     display: flex;
-    justify-content: flex-end;
+    justify-content: flex-start;
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
   }
-  /* Display actions row: screen buttons on the left, save on the right.
-     The spacer pushes Save away from the screen pair so the visual
-     hierarchy reads left-to-right: "do once" → "do once" → "save". */
-  .actions .spacer { flex: 1 1 auto; min-width: 8px; }
+  /* Display actions row: screen buttons + Save flow naturally left-to-right.
+     M14.1 lessons-learned: any "push Save to the right" trick (flex spacer,
+     margin-left:auto, justify-content: space-between) breaks the moment the
+     row wraps, because the empty wrapped line still consumes the full
+     column width and dumps Save against the right edge with awkward space.
+     Letting Save sit immediately after Screen on reads cleanly whether the
+     three fit on one line or wrap to two. */
   /* On phone widths the three buttons can't fit on one line (M9.8). */
   @media (max-width: 600px) {
     .actions {
@@ -314,24 +347,24 @@
       grid-template-columns: 1fr 1fr;
       gap: 10px;
     }
-    .actions .spacer { display: none; }
-    .actions md-filled-tonal-button#save-btn {
+    .actions md-filled-button#save-btn {
       grid-column: 1 / -1;
     }
   }
   .field-label {
     font-family: var(--hy-font-serif);
-    font-size: 13px;
-    font-weight: 500;
+    font-size: 15px;
+    font-weight: 600;
     font-variant-caps: small-caps;
     letter-spacing: 0.08em;
-    color: var(--hy-sage);
+    color: var(--hy-ink-mid);
   }
   .muted {
     font-family: var(--hy-font-serif);
-    font-size: 13px;
+    font-size: 15px;
     font-style: italic;
-    color: var(--hy-sage);
+    font-weight: 500;
+    color: var(--hy-ink-mid);
   }
   .brightness-row {
     display: flex;
@@ -354,7 +387,7 @@
     font-weight: 500;
     font-size: 20px;
     letter-spacing: 0.02em;
-    color: var(--hy-sage-bright);
+    color: var(--hy-ink-mid);
   }
 
   /* ----- Live updates ----- */
@@ -372,7 +405,8 @@
     background: transparent;
     color: var(--hy-ink);
     font-family: var(--hy-font-serif);
-    font-size: 13px;
+    font-size: 15px;
+    font-weight: 600;
     font-variant-caps: small-caps;
     letter-spacing: 0.08em;
   }
@@ -387,12 +421,13 @@
   .retry-hint {
     font-family: var(--hy-font-serif);
     font-style: italic;
-    font-size: 12px;
-    color: var(--hy-sage);
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--hy-ink-mid);
   }
   .log {
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: 11px;
+    font-size: 13px;
     line-height: 1.55;
     background: transparent;
     border: 1px solid var(--hy-hairline);
@@ -408,52 +443,47 @@
     font-family: var(--hy-font-serif);
     font-style: italic;
     font-size: 13px;
-    color: var(--hy-sage);
+    color: var(--hy-ink-mid);
   }
 
   /* ----- Packs ----- */
+  /* M14.1: desktop layout = pack-id flexes, file-picker is a compact
+     circular icon button to the right. Mobile (<=520px) reverts to the
+     original M14 stacked layout with a full-width dashed dropzone. */
   .upload-form {
-    display: grid;
-    grid-template-columns: 1fr 140px;
-    gap: 14px;
-  }
-  @media (max-width: 520px) {
-    .upload-form { grid-template-columns: 1fr; }
-  }
-  .file-input-wrap {
-    grid-column: 1 / -1;
     display: flex;
+    flex-direction: row;
     align-items: center;
     gap: 12px;
-    padding: 14px 16px;
-    border: 1px dashed var(--hy-hairline);
-    border-radius: 0;
-    background: transparent;
-    color: var(--hy-sage);
-    font-family: var(--hy-font-serif);
-    font-style: italic;
-    font-size: 14px;
-    cursor: pointer;
-    min-width: 0;
   }
-  .file-input-wrap:hover {
+  .file-picker {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: 1px solid #A8B090;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--hy-ink-mid);
+    cursor: pointer;
+    transition: background-color 150ms var(--hy-ease-emph),
+                color 150ms var(--hy-ease-emph),
+                border-color 150ms var(--hy-ease-emph);
+  }
+  .file-picker:hover {
     background: var(--hy-paper);
-    border-color: var(--hy-sage);
+    border-color: var(--hy-ink);
     color: var(--hy-ink);
   }
-  .file-input-wrap md-icon {
+  .file-picker md-icon {
     flex: 0 0 auto;
-    color: var(--hy-sage);
   }
-  .file-input-wrap .file-label {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* Native input hidden; M9.4 visually-hidden pattern. */
-  .file-input-wrap input[type="file"] {
+  /* On desktop the human-readable label collapses — the title attribute
+     and aria-label carry the meaning, JS still updates textContent for
+     screen-reader feedback during upload. */
+  .file-picker .file-label {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -462,6 +492,54 @@
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
     border: 0;
+  }
+  /* Native input visually hidden in both modes (M9.4 pattern). */
+  .file-picker input[type="file"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+  }
+  /* Mobile: revert to the M14 stacked layout — pack-id full-width,
+     dashed full-width dropzone with icon + visible label below. */
+  @media (max-width: 520px) {
+    .upload-form {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 14px;
+    }
+    .file-picker {
+      width: auto;
+      height: auto;
+      border: 1px dashed var(--hy-hairline);
+      border-radius: 0;
+      padding: 14px 16px;
+      gap: 12px;
+      justify-content: flex-start;
+      font-family: var(--hy-font-serif);
+      font-style: italic;
+      font-size: 15px;
+    }
+    .file-picker:hover {
+      border-color: var(--hy-sage);
+    }
+    .file-picker .file-label {
+      position: static;
+      width: auto;
+      height: auto;
+      padding: 0;
+      margin: 0;
+      overflow: hidden;
+      clip: auto;
+      flex: 1;
+      min-width: 0;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
   md-list#pack-list {
     --md-list-container-color: transparent;
@@ -475,9 +553,15 @@
   md-list#pack-list md-list-item {
     --md-list-item-container-color: transparent;
     --md-list-item-label-text-color: var(--hy-ink);
-    --md-list-item-supporting-text-color: var(--hy-sage);
+    --md-list-item-supporting-text-color: var(--hy-ink-mid);
     --md-list-item-label-text-font: var(--hy-font-serif);
     --md-list-item-supporting-text-font: var(--hy-font-serif);
+    /* M14.1: bump pack-row metadata size from MD's 12px default to 14px
+       so "v1 · 5.0 KiB" reads at arm's length. */
+    --md-list-item-supporting-text-size: 15px;
+    --md-list-item-supporting-text-weight: 500;
+    --md-list-item-label-text-size: 19px;
+    --md-list-item-label-text-weight: 500;
     position: relative;
   }
   /* Ornamental glyph divider between rows via ::before. */
@@ -487,7 +571,7 @@
     top: -8px;
     left: 50%;
     transform: translateX(-50%);
-    color: var(--hy-sage);
+    color: var(--hy-ink-mid);
     font-size: 11px;
     background: var(--hy-paper);
     padding: 0 10px;
@@ -510,7 +594,7 @@
     padding: 32px 16px;
     border: 1px dashed var(--hy-hairline);
     border-radius: 0;
-    color: var(--hy-sage);
+    color: var(--hy-ink-mid);
     background: transparent;
     font-family: var(--hy-font-serif);
     font-style: italic;
@@ -557,7 +641,7 @@
     content: '\2726';
     display: inline-block;
     margin-right: 8px;
-    color: var(--hy-sage);
+    color: var(--hy-ink-mid);
     font-style: normal;
     font-size: 11px;
     vertical-align: middle;
@@ -611,8 +695,23 @@
   }
   md-outlined-button {
     --md-outlined-button-label-text-color: var(--hy-ink);
-    --md-outlined-button-outline-color: var(--hy-hairline);
+    --md-outlined-button-outline-color: #A8B090;
     --md-outlined-button-label-text-font: var(--hy-font-serif);
+    --md-outlined-button-label-text-size: 16px;
+    --md-outlined-button-label-text-weight: 600;
+  }
+  /* Save = primary action. Filled with the dark forest ink so it
+     reads as the prominent CTA against the cream paper. Herbarium
+     serif on the label, and a wide min-width so it has presence. */
+  md-filled-button#save-btn {
+    --md-filled-button-container-color: var(--hy-ink);
+    --md-filled-button-label-text-color: var(--hy-paper);
+    --md-filled-button-label-text-font: var(--hy-font-serif);
+    --md-filled-button-label-text-size: 17px;
+    --md-filled-button-label-text-weight: 600;
+    --md-filled-button-hover-container-color: #2A4F2D;
+    --md-filled-button-pressed-container-color: #2A4F2D;
+    min-width: 140px;
   }
 </style>
 </head>
@@ -623,21 +722,19 @@
     <span class="dot" id="conn-dot"></span>
     <span id="status-host">&mdash;</span>
   </div>
-  <div class="now-showing">
-    <span class="label">Now showing</span>
-    <span class="value" id="status-content" title="">&mdash;</span>
-  </div>
-  <div class="spacer">
-    <md-icon-button id="token-icon-btn" aria-label="Set operator token" title="Set operator token">
-      <md-icon>key</md-icon>
-    </md-icon-button>
-  </div>
+  <div class="status-spacer"></div>
+  <md-icon-button id="token-icon-btn" aria-label="Set operator token" title="Set operator token">
+    <md-icon>key</md-icon>
+  </md-icon-button>
 </div>
 
 <header class="page-header">
   <h1>Hyacinth Operator</h1>
   <span class="ornament">✦&nbsp;❦&nbsp;✦</span>
-  <div class="subtitle" id="server-sub">&mdash;</div>
+  <div class="now-showing-header">
+    <span class="label">Now showing</span>
+    <span class="value" id="status-content" title="">&mdash;</span>
+  </div>
 </header>
 
 <main class="grid">
@@ -646,7 +743,7 @@
       <h2 id="h-display"><span class="glyph">&#10030;</span>Display</h2>
       <button type="button" id="reload-btn" class="stale-reload">(server changed &mdash; reload?)</button>
     </div>
-    <md-outlined-text-field id="content-field" label="Content URL" type="url"></md-outlined-text-field>
+    <md-outlined-text-field id="content-field" label="Content URL" type="url" placeholder="https://… or hyacinth://pack/…"></md-outlined-text-field>
     <div class="col">
       <div class="row between">
         <span class="field-label">Brightness</span>
@@ -677,8 +774,7 @@
         <md-icon slot="icon">light_mode</md-icon>
         Screen on
       </md-outlined-button>
-      <span class="spacer"></span>
-      <md-filled-tonal-button id="save-btn">Save</md-filled-tonal-button>
+      <md-filled-button id="save-btn">Save</md-filled-button>
     </div>
   </section>
 
@@ -687,8 +783,8 @@
       <h2 id="h-packs"><span class="glyph">&#10087;</span>Packs</h2>
     </div>
     <div class="upload-form">
-      <md-outlined-text-field id="pack-id" label="Pack ID (slug)"></md-outlined-text-field>
-      <label class="file-input-wrap">
+      <md-outlined-text-field id="pack-id" label="Pack ID (slug)" placeholder="e.g. clock"></md-outlined-text-field>
+      <label class="file-picker" title="Choose a file (zip or image)" aria-label="Choose a file (zip or image)">
         <md-icon>upload_file</md-icon>
         <span class="file-label" id="pack-file-label">Choose a file (zip or image)</span>
         <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif" />
@@ -738,9 +834,10 @@
   const reloadBtn    = $('reload-btn');
   const tokenBtn     = $('token-icon-btn');
 
-  // Host text appears in both the sticky bar and the header subtitle.
+  // Host text appears in the sticky bar; the page header subtitle slot now
+  // shows the "Now showing <url>" caption (M14.1 mobile fix — the squashed
+  // sticky-bar layout was unreadable on a phone).
   statusHost.textContent = location.host;
-  $('server-sub').textContent = location.host;
 
   // ----- Operator auth token (M8) -----
   // Stored in localStorage and attached as Authorization: Bearer to every

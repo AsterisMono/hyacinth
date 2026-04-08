@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -183,6 +184,10 @@ func TestGetIndexReturnsHTML(t *testing.T) {
 		"Cormorant Garamond",
 		"\u2726",
 		"vellum-page",
+		// M14.1 readability pins: the new readable foreground token exists,
+		// and the body font-size bump (16 → 19px) landed.
+		"--hy-ink-mid:",
+		"font-size: 19px",
 	}
 	for _, m := range musts {
 		if !strings.Contains(body, m) {
@@ -192,6 +197,15 @@ func TestGetIndexReturnsHTML(t *testing.T) {
 	// M14 regression: dark mode was deliberately removed — paper is paper.
 	if strings.Contains(body, "@media (prefers-color-scheme: dark)") {
 		t.Errorf("index HTML still contains a dark-mode media query; M14 removed it")
+	}
+	// M14.1 regression: sage stays as decorative accent (border-color, dot
+	// background, --md-icon-button-icon-color), but is never used as text
+	// foreground via the `color:` property. Line-anchored regex so we
+	// match the standalone `color:` declaration only — `border-color:` and
+	// `--md-...-icon-color:` are decorative and intentionally still sage.
+	sageTextColor := regexp.MustCompile(`(?m)^\s*color:\s*var\(--hy-sage\)`)
+	if sageTextColor.MatchString(body) {
+		t.Errorf("index HTML still uses `color: var(--hy-sage)` as a text foreground; M14.1 promoted these to var(--hy-ink-mid)")
 	}
 }
 
