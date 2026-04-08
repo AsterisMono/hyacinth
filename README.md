@@ -1,8 +1,12 @@
-# Hyacinth
+# Hyacinth — Ita-Bag Display
 
-A dedicated-tablet kiosk stack: a Flutter/Android client that renders a full-screen WebView of whatever the server tells it to, plus a small Go server that holds the current display config, serves an operator frontend at `/`, and pushes live updates over WebSocket. Designed for a single old Android tablet on the wall showing dashboards / photo frames / ambient displays, reconfigured on demand from any browser on the LAN.
+I have a tote bag with a transparent side window. The kind meant for pinning enamel badges and holding up a single beloved plush. I wanted to put a screen in it instead — a small living window my bag carries around, showing whatever I tell it to. A rotating photo of the cat. A tiny dashboard. A lovingly hand-built HTML page that only lives for one afternoon and then gets replaced. A different mood every day I leave the house.
 
-The client is a normal Android app launched from the app drawer (M4.7 tried wiring it as a launcher and that proved fragile; M4.8 stripped the launcher integration entirely). The system Back gesture from the fullscreen display drops you into the MainActivity / settings page; a "Return to content" button takes you back.
+Hyacinth is the kiosk stack that makes the bag work. A Flutter/Android client runs on an old tablet wedged into the bag's display pocket and renders a fullscreen WebView of whatever the server tells it to. A small Go server holds the current display config, serves an operator frontend at `/`, and pushes live updates over WebSocket. The operator UI runs on any phone on the same Wi-Fi, so I can re-skin the bag mid-walk without ever touching the tablet itself.
+
+The bag-mounted shape drives almost every design decision. The tablet is always in motion, always at the mercy of strap rubs and dust and pocket lint, and it must never draw attention to itself with a stray tap registering from a bag bump — M12 unconditionally blocks touches on the display, M11 auto-tunes the CPU governor to `powersave` while content is showing to stretch battery, M8's foreground service keeps the WebSocket alive through Doze, M9's operator UI lets me flip the screen off for a meeting with one tap. See `plan.md` for the full milestone trail and the design rationale behind every major decision.
+
+The client is a normal Android app launched from the app drawer (M4.7 tried wiring it as the system launcher and that proved fragile; M4.8 stripped launcher integration entirely). The system Back gesture from the fullscreen display drops me into the MainActivity / settings page; a "Return to content" button takes me back.
 
 ## Layout
 
