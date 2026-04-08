@@ -784,7 +784,7 @@
     </div>
     <div class="upload-form">
       <md-outlined-text-field id="pack-id" label="Pack ID (slug)" placeholder="e.g. clock"></md-outlined-text-field>
-      <label class="file-picker" title="Choose a file (zip, image, or video)" aria-label="Choose a file (zip, image, or video)">
+      <label class="file-picker" title="Choose a file (zip, image, or video) — pack id auto-fills from filename" aria-label="Choose a file (zip, image, or video) — pack id auto-fills from filename">
         <md-icon>upload_file</md-icon>
         <span class="file-label" id="pack-file-label">Choose a file (zip, image, or video)</span>
         <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif,video/mp4" />
@@ -1224,19 +1224,44 @@
     return null;
   }
 
+  // M16.1: derive a pack id from a filename's basename. Strict mirror of
+  // the server's packIDRe (^[a-z0-9][a-z0-9-]{0,31}$) modulo a single
+  // `_` → `-` rewrite, since underscores and dashes are interchangeable
+  // in slug-land. Returns the slug on success, or null when the basename
+  // can't be safely auto-slugified — the caller is expected to surface a
+  // "type a pack id manually" toast in that case so the operator never
+  // gets a silently-mangled id they can't figure out later.
+  function slugFromFilename(name) {
+    if (!name) return null;
+    var dot = name.lastIndexOf('.');
+    if (dot < 1) return null; // no extension OR a dotfile-style name
+    var base = name.substring(0, dot).toLowerCase().replace(/_/g, '-');
+    if (/^[a-z0-9][a-z0-9-]{0,31}$/.test(base)) return base;
+    return null;
+  }
+
   // M9.5: upload fires immediately on file selection — no separate
-  // Upload button. The Pack ID must already be filled; if not, we
-  // toast an error and clear the file selection so the user can
-  // re-pick after entering an id.
+  // Upload button. The Pack ID must already be filled; if not, M16.1
+  // tries to derive it from the filename and only falls back to a
+  // "type a pack id manually" toast when the filename is too messy
+  // for the strict slug rules.
   let uploading = false;
   async function uploadPack(file) {
     if (uploading) return;
-    const id = (packIdField.value || '').trim();
+    let id = (packIdField.value || '').trim();
     if (!id) {
-      toast('Enter a pack id first', true);
-      packFileInput.value = '';
-      packFileLabel.textContent = 'Choose a file (zip, image, or video)';
-      return;
+      // M16.1: try to auto-fill from the filename before giving up.
+      const auto = slugFromFilename(file.name || '');
+      if (auto) {
+        id = auto;
+        packIdField.value = auto;
+      } else {
+        toast('Filename "' + (file.name || '') +
+            '" can\'t be auto-slugified — type a pack id manually', true);
+        packFileInput.value = '';
+        packFileLabel.textContent = 'Choose a file (zip, image, or video)';
+        return;
+      }
     }
     const type = packTypeFromFile(file);
     if (!type) {

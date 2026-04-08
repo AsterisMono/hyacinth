@@ -737,3 +737,17 @@ func TestOperatorHTMLContainsMp4AutoDetect(t *testing.T) {
 		t.Errorf("indexHTML does not mention 'mp4' as a return value")
 	}
 }
+
+func TestOperatorHTMLContainsSlugFromFilename(t *testing.T) {
+	// M16.1: regression check that the inlined indexHTML still defines
+	// the slugFromFilename() helper and the slug regex it validates
+	// against. A future refactor that silently drops the helper would
+	// fall back to the M9.5 "type a pack id first" path with no other
+	// signal — this test is the structural reminder.
+	if !strings.Contains(indexHTML, "slugFromFilename") {
+		t.Errorf("indexHTML does not define slugFromFilename helper")
+	}
+	if !strings.Contains(indexHTML, "[a-z0-9][a-z0-9-]") {
+		t.Errorf("indexHTML does not contain the slug regex pattern")
+	}
+}
