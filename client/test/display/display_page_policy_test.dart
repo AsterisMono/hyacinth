@@ -15,6 +15,7 @@ import 'package:hyacinth/config/config_model.dart';
 import 'package:hyacinth/display/display_page.dart';
 import 'package:hyacinth/display/webview_controller.dart';
 import 'package:hyacinth/system/brightness.dart';
+import 'package:hyacinth/system/cpu_governor.dart';
 import 'package:hyacinth/system/secure_settings.dart';
 
 class FakeWindowBrightness extends WindowBrightness {
@@ -89,6 +90,32 @@ class FakeSecureSettings extends SecureSettings {
   }
 }
 
+/// M11 — fake [CpuGovernor] that records call counts. Overrides every
+/// method so the production `ConfigStore` (SharedPreferences) and the
+/// underlying MethodChannel are never touched from test code.
+class _FakeCpuGovernor extends CpuGovernor {
+  _FakeCpuGovernor({this.supported = true}) : super();
+
+  final bool supported;
+  int enterCalls = 0;
+  int restoreCalls = 0;
+
+  @override
+  Future<bool> isSupported() async => supported;
+
+  @override
+  Future<bool> enterPowersave() async {
+    enterCalls++;
+    return supported;
+  }
+
+  @override
+  Future<bool> restore() async {
+    restoreCalls++;
+    return true;
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -110,6 +137,7 @@ void main() {
     required HyacinthConfig config,
     required FakeWindowBrightness wb,
     required FakeSecureSettings ss,
+    _FakeCpuGovernor? cpu,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -117,6 +145,7 @@ void main() {
           config: config,
           windowBrightness: wb,
           secureSettings: ss,
+          cpuGovernor: cpu ?? _FakeCpuGovernor(supported: false),
         ),
       ),
     );
@@ -242,6 +271,7 @@ void main() {
           config: cfg.copyWith(brightness: '80'),
           windowBrightness: wb,
           secureSettings: ss,
+          cpuGovernor: _FakeCpuGovernor(supported: false),
         ),
       ),
     );
@@ -251,6 +281,33 @@ void main() {
       isTrue,
       reason: 'wb calls after update were: ${wb.calls}',
     );
+  });
+
+  testWidgets('M11: cpu governor enter on mount, restore on unmount',
+      (tester) async {
+    final wb = FakeWindowBrightness();
+    final ss = FakeSecureSettings(granted: false);
+    final cpu = _FakeCpuGovernor(supported: true);
+    await mountAndSettle(
+      tester,
+      config: const HyacinthConfig(
+        content: 'https://x/',
+        contentRevision: 'r1',
+        brightness: '50',
+        screenTimeout: 'always-on',
+      ),
+      wb: wb,
+      ss: ss,
+      cpu: cpu,
+    );
+    expect(cpu.enterCalls, 1, reason: 'enterPowersave called once on mount');
+    expect(cpu.restoreCalls, 0, reason: 'restore not yet called');
+
+    // Unmount DisplayPage by swapping in an empty tree.
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pumpAndSettle();
+    expect(cpu.restoreCalls, 1, reason: 'restore called once on unmount');
+    expect(cpu.enterCalls, 1, reason: 'enter not re-invoked');
   });
 
   testWidgets('dispose attempts restoration', (tester) async {

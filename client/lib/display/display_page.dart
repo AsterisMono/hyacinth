@@ -6,6 +6,7 @@ import '../config/config_model.dart';
 import '../resource_pack/pack_cache.dart';
 import '../system/brightness.dart';
 import '../system/config_policy.dart';
+import '../system/cpu_governor.dart';
 import '../system/secure_settings.dart';
 import 'webview_controller.dart';
 
@@ -37,8 +38,10 @@ class DisplayPage extends StatefulWidget {
     this.screenPowerError,
     WindowBrightness? windowBrightness,
     SecureSettings? secureSettings,
+    CpuGovernor? cpuGovernor,
   })  : _windowBrightness = windowBrightness,
-        _secureSettings = secureSettings;
+        _secureSettings = secureSettings,
+        _cpuGovernorInjected = cpuGovernor;
 
   final HyacinthConfig config;
 
@@ -68,6 +71,11 @@ class DisplayPage extends StatefulWidget {
   /// this null and a default `SecureSettings()` is built in
   /// [State.initState].
   final SecureSettings? _secureSettings;
+
+  /// Test seam for the M11 CPU-governor layer. Production code leaves
+  /// this null and a default `CpuGovernor()` is built in
+  /// [State.initState].
+  final CpuGovernor? _cpuGovernorInjected;
 
   @override
   State<DisplayPage> createState() => _DisplayPageState();
@@ -104,6 +112,7 @@ class _DisplayPageState extends State<DisplayPage>
   late HyacinthWebView _webView;
   late final WindowBrightness _windowBrightness;
   late final SecureSettings _secureSettings;
+  late final CpuGovernor _cpuGovernor;
   _SystemDisplaySnapshot? _snapshot;
   bool _hasSecurePermission = false;
 
@@ -115,6 +124,7 @@ class _DisplayPageState extends State<DisplayPage>
     WakelockPlus.enable();
     _windowBrightness = widget._windowBrightness ?? WindowBrightness();
     _secureSettings = widget._secureSettings ?? SecureSettings();
+    _cpuGovernor = widget._cpuGovernorInjected ?? CpuGovernor();
     _webView = HyacinthWebView(
       url: widget.config.content,
       packCache: widget.packCache,
@@ -141,6 +151,16 @@ class _DisplayPageState extends State<DisplayPage>
     }
     if (!mounted) return;
     await _applyPolicy(widget.config);
+    // M11 — fire-and-forget powersave entry. Must happen strictly after
+    // brightness apply so a failure here (no root, no cpufreq, etc.)
+    // never blocks the display from rendering. The CpuGovernor wrapper
+    // already swallows all errors but we wrap again defensively.
+    try {
+      // ignore: discard_returned_future
+      _cpuGovernor.enterPowersave();
+    } catch (e) {
+      debugPrint('CpuGovernor.enterPowersave threw: $e');
+    }
   }
 
   Future<void> _applyPolicy(HyacinthConfig cfg) async {
@@ -246,6 +266,13 @@ class _DisplayPageState extends State<DisplayPage>
       await _windowBrightness.reset();
     } catch (e) {
       debugPrint('window brightness reset failed: $e');
+    }
+    // M11 — restore CPU governor snapshot. Fire-and-forget, never throws.
+    try {
+      // ignore: discard_returned_future
+      _cpuGovernor.restore();
+    } catch (e) {
+      debugPrint('CpuGovernor.restore threw: $e');
     }
     final snap = _snapshot;
     if (snap == null || !_hasSecurePermission) return;
