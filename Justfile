@@ -50,9 +50,28 @@ pack-dev id:
     @cd packs/{{id}} && [ -d node_modules ] || pnpm install --silent
     cd packs/{{id}} && pnpm exec vite
 
-pack-build id:
+pack-build id: (_pack-vite-build id) (pack-lint id)
+
+_pack-vite-build id:
     @cd packs/{{id}} && [ -d node_modules ] || pnpm install --silent
     cd packs/{{id}} && pnpm exec vite build
+
+# M15 offline-pure invariant: built dist/ must contain zero https:// refs.
+# `http://www.w3.org/...` is an XML/SVG namespace URI, never a network fetch,
+# so it's whitelisted. Everything else (CDN scripts, Google Fonts links the
+# vite-plugin-webfont-dl plugin missed, hotlinked images, fetch() calls) is
+# a hard fail — operators run `just pack-build <id>` locally and the lint
+# prevents a pack with a network dependency from being zipped.
+pack-lint id:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    matches=$(grep -rEn "https?://[^\"' )]+" packs/{{id}}/dist 2>/dev/null | grep -v "www\.w3\.org" || true)
+    if [ -n "$matches" ]; then
+        echo "✗ pack {{id}} has network references in dist/:"
+        echo "$matches"
+        exit 1
+    fi
+    echo "✓ pack {{id}} is offline-pure (no https:// references in dist)"
 
 pack-upload id: (pack-build id)
     cd packs/{{id}}/dist && zip -qr ../pack.zip .

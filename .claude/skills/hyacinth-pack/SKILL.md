@@ -7,7 +7,7 @@ description: Scaffold a new Hyacinth content pack — a small Vite project that 
 
 ## What you're building
 
-A "content pack" is a tiny self-contained Vite project that lives at `packs/<pack-id>/` in the Hyacinth repo. You build it (`vite build`) into a `dist/` directory; the project's Justfile zips that dist up and POSTs it to the running Hyacinth server, which validates, stores, and serves it back to the tablet over the custom `hyacinth://pack/<id>/<path>` scheme. Inside the kiosk's WebView, the pack's `index.html` becomes the entire display surface — fullscreen, no chrome, no scroll.
+A "content pack" is a tiny self-contained Vite project that lives at `packs/<pack-id>/` in the Hyacinth repo. You build it (`vite build`) into a `dist/` directory; the project's Justfile zips that dist up and POSTs it to the running Hyacinth server, which validates, stores, and serves it back to the tablet over the custom `hyacinth://pack/<id>/<path>` scheme. Inside the kiosk's WebView, the pack's `index.html` becomes the entire display surface — fullscreen, no chrome, no scroll. The built `dist/` must be fully self-contained: no runtime network requests, no CDN references, no hot-linked assets — the Ita-Bag tablet is routinely offline, and a pack that tries to fetch anything across the wire silently degrades.
 
 The kiosk has very specific constraints. Get them right once in the scaffold and every future pack inherits them.
 
@@ -19,10 +19,11 @@ These are the gotchas that distinguish a Hyacinth pack from a normal Vite projec
 2. **`target: 'esnext'`** — `flutter_inappwebview` is modern Chrome (M115+ on the user's tablet). Skip the legacy polyfill bundle bloat. The M11 powersave CPU governor means every wasted cycle hurts.
 3. **No touch events** — M12 unconditionally wraps the WebView in `IgnorePointer`. `click` / `tap` / `pointerdown` listeners on pack content will never fire. Don't bother. Build for ambient consumption: animations, clocks, slideshows, dashboards, art. Not interactive widgets.
 4. **Single CSS bundle (`cssCodeSplit: false`)** — packs are usually one HTML page. Splitting CSS adds loader overhead for no benefit at this scale.
-5. **Size caps** — the server enforces ≤ 50 MiB zip body, ≤ 200 MiB uncompressed total, ≤ 50 MiB per entry, ≤ 5000 entries. The hello-bag starter is well under 30 KiB before fonts. Stay light.
-6. **No path traversal** — every file in the dist must live at or under the dist root. Don't reach outside it with `../` references.
-7. **Powersave CPU** — M11 auto-tunes the tablet to `powersave` while content is showing. Heavy `requestAnimationFrame` loops (60fps shaders, particle physics) will jitter. Prefer CSS animations, sparse `setInterval` updates, or 30fps caps.
-8. **Landscape 1280×800** — that's the target tablet. Use `vw`/`vh`/`clamp()` so the layout still works in `vite dev` at desktop sizes.
+5. **No network requests at runtime** — packs are sealed offline payloads. Source `index.html` can keep a `<link>` to `fonts.googleapis.com` for readability (the font choice stays obvious at a glance, and `vite dev` still works over Wi-Fi), but `vite-plugin-webfont-dl` is wired into the template's `vite.config.js` so the built `dist/` contains zero `https://` references — the plugin downloads the Google Fonts CSS + woff2 files at build time and rewrites the `<link>` to point at local asset paths. Do **not** remove the plugin. Do **not** add `<script src="https://...">`, `fetch('https://...')`, hotlinked images, or CDN imports — those are not covered by the plugin and will break offline. The `just pack-build <id>` recipe runs a `pack-lint` step that greps the built `dist/` for any `https://` reference and hard-fails the build if it finds one, so a regression here is caught before the zip is uploaded.
+6. **Size caps** — the server enforces ≤ 50 MiB zip body, ≤ 200 MiB uncompressed total, ≤ 50 MiB per entry, ≤ 5000 entries. The hello-bag starter is well under 30 KiB before fonts. Stay light.
+7. **No path traversal** — every file in the dist must live at or under the dist root. Don't reach outside it with `../` references.
+8. **Powersave CPU** — M11 auto-tunes the tablet to `powersave` while content is showing. Heavy `requestAnimationFrame` loops (60fps shaders, particle physics) will jitter. Prefer CSS animations, sparse `setInterval` updates, or 30fps caps.
+9. **Landscape, responsive** — the tablet is mounted horizontally. Design with `vw`/`vh`/`clamp()` and relative units so the layout adapts to whatever viewport the WebView reports — Android's `devicePixelRatio` scaling means the CSS viewport is smaller than the physical screen, and hardcoding pixel counts will bite. `vite dev` in a desktop browser at a landscape tablet aspect ratio is the primary preview surface; the layout should survive any reasonable viewport without breaking.
 
 ## Scaffolding flow
 
@@ -113,9 +114,27 @@ pack-dev id:
     @cd packs/{{id}} && [ -d node_modules ] || pnpm install --silent
     cd packs/{{id}} && pnpm exec vite
 
-pack-build id:
+pack-build id: (_pack-vite-build id) (pack-lint id)
+
+_pack-vite-build id:
     @cd packs/{{id}} && [ -d node_modules ] || pnpm install --silent
     cd packs/{{id}} && pnpm exec vite build
+
+# M15 offline-pure invariant: built dist/ must contain zero https:// refs.
+# `http://www.w3.org/...` is an XML/SVG namespace URI, not a network fetch,
+# so it's whitelisted. Everything else (CDN scripts, Google Fonts links the
+# vite-plugin-webfont-dl plugin missed, hotlinked images, fetch() calls) is
+# a hard fail.
+pack-lint id:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    matches=$(grep -rEn "https?://[^\"' )]+" packs/{{id}}/dist 2>/dev/null | grep -v "www\.w3\.org" || true)
+    if [ -n "$matches" ]; then
+        echo "✗ pack {{id}} has network references in dist/:"
+        echo "$matches"
+        exit 1
+    fi
+    echo "✓ pack {{id}} is offline-pure (no https:// references in dist)"
 
 pack-upload id: (pack-build id)
     cd packs/{{id}}/dist && zip -qr ../pack.zip .
