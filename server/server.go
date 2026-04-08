@@ -783,22 +783,29 @@ const indexHTML = `<!DOCTYPE html>
   @media (min-width: 720px) {
     .grid {
       grid-template-columns: 1fr 1fr;
+      /* Order: Display | Packs (top row), Power | Live (bottom row).
+         Source order in markup follows the same Display → Packs →
+         Power → Live sequence so the single-column phone view
+         matches without needing source-order overrides. */
       grid-template-areas:
         "display packs"
-        "power   packs"
-        "live    packs";
+        "power   live";
     }
     .sect-display { grid-area: display; }
-    .sect-power   { grid-area: power; }
     .sect-packs   { grid-area: packs; }
+    .sect-power   { grid-area: power; }
     .sect-live    { grid-area: live; }
   }
   @media (min-width: 1100px) {
     .grid {
-      grid-template-columns: 1fr 1fr 1.4fr;
+      /* Display on the left (the focal section, taller) spans both
+         rows. Packs in the middle column also spans both rows since
+         the pack list is the second-tallest piece. Power and Live
+         stack on the right. */
+      grid-template-columns: 1fr 1.4fr 1fr;
       grid-template-areas:
-        "display power packs"
-        "display live  packs";
+        "display packs power"
+        "display packs live";
     }
   }
 
@@ -816,8 +823,8 @@ const indexHTML = `<!DOCTYPE html>
     animation: hy-rise 400ms var(--hy-ease-emph) forwards;
   }
   .sect-display { background: var(--md-sys-color-surface-container-high); animation-delay: 0ms; }
-  .sect-power   { animation-delay: 60ms; }
-  .sect-packs   { animation-delay: 120ms; }
+  .sect-packs   { animation-delay: 60ms; }
+  .sect-power   { animation-delay: 120ms; }
   .sect-live    { animation-delay: 180ms; }
   @keyframes hy-rise {
     to { opacity: 1; transform: none; }
@@ -1159,6 +1166,25 @@ const indexHTML = `<!DOCTYPE html>
     </div>
   </section>
 
+  <section class="card sect-packs" aria-labelledby="h-packs">
+    <div class="card-head">
+      <h2 id="h-packs">Packs</h2>
+    </div>
+    <div class="upload-form">
+      <md-outlined-text-field id="pack-id" label="Pack ID (slug)"></md-outlined-text-field>
+      <label class="file-input-wrap">
+        <md-icon>upload_file</md-icon>
+        <span class="file-label" id="pack-file-label">Choose a file (zip or image)</span>
+        <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif" />
+      </label>
+    </div>
+    <md-list id="pack-list"></md-list>
+    <div id="pack-empty" class="pack-empty" hidden>
+      <md-icon>inventory_2</md-icon>
+      <div class="pack-empty-text">No packs uploaded yet</div>
+    </div>
+  </section>
+
   <section class="card sect-power" aria-labelledby="h-power">
     <div class="card-head">
       <h2 id="h-power">Power</h2>
@@ -1186,25 +1212,6 @@ const indexHTML = `<!DOCTYPE html>
       <span class="retry-hint" id="ws-retry"></span>
     </div>
     <div class="log empty" id="log">Waiting for the first config push&hellip;</div>
-  </section>
-
-  <section class="card sect-packs" aria-labelledby="h-packs">
-    <div class="card-head">
-      <h2 id="h-packs">Packs</h2>
-    </div>
-    <div class="upload-form">
-      <md-outlined-text-field id="pack-id" label="Pack ID (slug)"></md-outlined-text-field>
-      <label class="file-input-wrap">
-        <md-icon>upload_file</md-icon>
-        <span class="file-label" id="pack-file-label">Choose a file (zip or image)</span>
-        <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif" />
-      </label>
-    </div>
-    <md-list id="pack-list"></md-list>
-    <div id="pack-empty" class="pack-empty" hidden>
-      <md-icon>inventory_2</md-icon>
-      <div class="pack-empty-text">No packs uploaded yet</div>
-    </div>
   </section>
 </main>
 
