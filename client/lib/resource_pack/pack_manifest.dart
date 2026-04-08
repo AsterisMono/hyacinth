@@ -13,6 +13,12 @@
 ///   "createdAt": "2026-04-07T10:15:00Z"
 /// }
 /// ```
+///
+/// `type` is one of `png`, `jpg`, `webp`, `gif` (M5), `zip` (M6),
+/// or `mp4` (M16). The renderer-selection layer in `DisplayPage` keys off
+/// `isVideo` / `isZip` to decide whether to mount `HyacinthVideoPlayer`,
+/// `HyacinthWebView` against an index.html, or `HyacinthWebView` against
+/// the single image file.
 class PackManifest {
   const PackManifest({
     required this.id,
@@ -35,6 +41,11 @@ class PackManifest {
   /// True for zip-archive packs (Vite builds with index.html at the
   /// archive root). Image packs return false.
   bool get isZip => type == 'zip';
+
+  /// True for M16 video packs (mp4 only). Image and zip packs return false.
+  /// `DisplayPage` reads this (via `AppState`) to decide whether to mount
+  /// the native `HyacinthVideoPlayer` instead of the WebView renderer.
+  bool get isVideo => type == 'mp4';
 
   factory PackManifest.fromJson(Map<String, dynamic> json) {
     return PackManifest(

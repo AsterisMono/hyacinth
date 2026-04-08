@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
@@ -112,11 +113,24 @@ class AppState extends ChangeNotifier {
   Timer? _fallbackTimer;
   bool _disposed = false;
   String? _screenPowerError;
+  File? _videoFile;
 
   AppPhase get phase => _phase;
   HyacinthConfig? get config => _config;
   String? get error => _error;
   HealthReport? get lastHealthReport => _lastHealthReport;
+
+  /// M16 — when the resolved pack manifest type is `mp4`, this holds the
+  /// local file `DisplayPage` should hand to `HyacinthVideoPlayer` instead
+  /// of mounting the WebView. `null` for `https://` content URLs and for
+  /// image / zip packs (those still go through the WebView path).
+  ///
+  /// Populated by `_ensurePackForConfig` immediately after the pack
+  /// manager finishes verifying the pack on disk, so by the time
+  /// [phase] transitions to `displaying`, the file is guaranteed to
+  /// exist if it's non-null. Cleared back to `null` whenever the
+  /// resolved manifest is not a video.
+  File? get videoFile => _videoFile;
 
   /// Most recent screen-power failure. `null` means the last call succeeded
   /// (or no call has been made). Cleared on the next successful apply.
@@ -321,17 +335,40 @@ class AppState extends ChangeNotifier {
   /// pack manager to fetch/verify it. No-op for `https://` URLs. Throws
   /// on failure — callers in [_connect] / [_applyConfig] decide what to
   /// do with that.
+  ///
+  /// Side effect: also resolves [_videoFile] from the manifest. When the
+  /// manifest type is `mp4`, looks up the local file via [PackCache] and
+  /// stashes it for `DisplayPage` to pick up via the [videoFile] getter.
+  /// Otherwise clears [_videoFile] to `null` so a previous video pack
+  /// doesn't leak across a content swap.
   Future<void> _ensurePackForConfig(
     HyacinthConfig cfg,
     String serverBaseUrl,
   ) async {
     final packId = extractPackIdFromContent(cfg.content);
-    if (packId == null) return;
+    if (packId == null) {
+      _videoFile = null;
+      return;
+    }
     final mgr = _ensurePackManager(serverBaseUrl);
     final PackManifest result = await mgr.ensure(packId);
     debugPrint(
       'PackManager.ensure($packId) -> v${result.version} (${result.sha256})',
     );
+    if (result.isVideo) {
+      // Resolve the on-disk video file. We accept a null result here as a
+      // soft failure (no exception thrown) and just leave _videoFile null
+      // — the WebView path will then try to render the hyacinth:// URL,
+      // which will surface the error in a way the operator can see. The
+      // expected case is that the file is present because mgr.ensure()
+      // just verified it.
+      _videoFile = await _packCache.currentContentFileByPath(
+        packId,
+        result.filename,
+      );
+    } else {
+      _videoFile = null;
+    }
   }
 
   void _openWsClient(String baseUrl) {

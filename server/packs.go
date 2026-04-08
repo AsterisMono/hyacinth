@@ -41,7 +41,7 @@ import (
 type PackManifest struct {
 	ID        string `json:"id"`
 	Version   int    `json:"version"`
-	Type      string `json:"type"`     // png|jpg|webp|gif (M5) | zip (M6)
+	Type      string `json:"type"`     // png|jpg|webp|gif (M5) | zip (M6) | mp4 (M16)
 	Filename  string `json:"filename"` // e.g. image.png
 	SHA256    string `json:"sha256"`
 	Size      int64  `json:"size"`
@@ -61,6 +61,18 @@ const (
 	maxZipEntryUncompr   = 50 << 20  // single-entry uncompressed cap
 	maxZipEntries        = 5000      // sanity cap on entry count
 )
+
+// Video-pack defenses (M16). Videos are larger than images on the wire,
+// so they get their own ceiling. The multipart parser uses
+// maxUploadBodyBytes (the largest of the three caps) so any pack type can
+// reach its full per-type ceiling; the per-type helper then enforces its
+// own cap precisely.
+const maxVideoBodyBytes = 200 << 20
+
+// maxUploadBodyBytes is the upper bound for the multipart parser. It must
+// be >= every per-type cap so the parser does not bail out before the
+// per-type check can emit a precise error.
+const maxUploadBodyBytes = maxVideoBodyBytes
 
 // versionsToKeep is the rollback retention; M5 keeps the last two versions
 // of each pack on disk so a bad upload can be rolled back manually.
@@ -82,6 +94,13 @@ var (
 		"webp": "webp",
 		"gif":  "gif",
 	}
+
+	// allowedVideoExt maps a video pack `type` form value to its on-disk
+	// extension. M16 ships mp4 only; webm/h265 are explicitly out of scope
+	// (see the M16 paragraph in plan.md).
+	allowedVideoExt = map[string]string{
+		"mp4": "mp4",
+	}
 )
 
 // validImagePackType returns true if `t` is one of the allowed image types.
@@ -90,9 +109,15 @@ func validImagePackType(t string) bool {
 	return ok
 }
 
-// validPackType returns true for any allowed pack type (image or zip).
+// validVideoPackType returns true if `t` is one of the allowed video types.
+func validVideoPackType(t string) bool {
+	_, ok := allowedVideoExt[t]
+	return ok
+}
+
+// validPackType returns true for any allowed pack type (image, zip, or video).
 func validPackType(t string) bool {
-	return t == "zip" || validImagePackType(t)
+	return t == "zip" || validImagePackType(t) || validVideoPackType(t)
 }
 
 // sourcePath returns the on-disk path of the original uploaded bytes for
@@ -478,10 +503,10 @@ func (s *hyacinthServer) handleDeletePack(w http.ResponseWriter, r *http.Request
 
 func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request) {
 	// Cap the request body BEFORE touching multipart parsing so an oversize
-	// upload bails out early. We use the larger of the two caps here so the
-	// type-specific check below can still emit a precise error.
-	r.Body = http.MaxBytesReader(w, r.Body, maxZipBodyBytes)
-	if err := r.ParseMultipartForm(maxZipBodyBytes); err != nil {
+	// upload bails out early. We use the largest of the per-type caps here
+	// so the type-specific check below can still emit a precise error.
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBodyBytes)
+	if err := r.ParseMultipartForm(maxUploadBodyBytes); err != nil {
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) || strings.Contains(err.Error(), "request body too large") {
 			logError(r, "payload_too_large", err)
@@ -507,7 +532,7 @@ func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request
 	if !validPackType(packType) {
 		logError(r, "bad_request", errors.New("invalid pack type"))
 		writeError(w, http.StatusBadRequest,
-			"bad_request", "invalid pack type (allowed: png, jpg, webp, gif, zip)")
+			"bad_request", "invalid pack type (allowed: png, jpg, webp, gif, zip, mp4)")
 		return
 	}
 
@@ -530,7 +555,108 @@ func (s *hyacinthServer) handleUploadPack(w http.ResponseWriter, r *http.Request
 		s.uploadZipPack(w, r, id, file, mh)
 		return
 	}
+	if validVideoPackType(packType) {
+		s.uploadVideoPack(w, r, id, packType, file, mh)
+		return
+	}
 	s.uploadImagePack(w, r, id, packType, file, mh)
+}
+
+// uploadVideoPack is the M16 video path. Parallel to uploadImagePack but
+// with a video MIME sniff and a 200 MiB ceiling instead of 50 MiB.
+func (s *hyacinthServer) uploadVideoPack(w http.ResponseWriter, r *http.Request, id, packType string, file io.Reader, header *multipartHeader) {
+	if header.Size > maxVideoBodyBytes {
+		logError(r, "payload_too_large", errors.New("video pack too large"))
+		writeError(w, http.StatusRequestEntityTooLarge,
+			"payload_too_large", "pack too large")
+		return
+	}
+
+	// Filename extension must match the declared type. M16 ships mp4 only,
+	// so the only accepted suffix is .mp4 — no aliases.
+	origName := header.Filename
+	gotExt := strings.ToLower(strings.TrimPrefix(filepath.Ext(origName), "."))
+	if gotExt != allowedVideoExt[packType] {
+		logError(r, "bad_request", errors.New("ext mismatch"))
+		writeError(w, http.StatusBadRequest, "bad_request",
+			fmt.Sprintf("file extension %q does not match type %q", gotExt, packType))
+		return
+	}
+
+	buf, err := io.ReadAll(file)
+	if err != nil {
+		logError(r, "bad_request", err)
+		writeError(w, http.StatusBadRequest,
+			"bad_request", "read upload: "+err.Error())
+		return
+	}
+	if int64(len(buf)) != header.Size {
+		logError(r, "bad_request", errors.New("short read"))
+		writeError(w, http.StatusBadRequest, "bad_request", "short read")
+		return
+	}
+	sniff := http.DetectContentType(buf)
+	// http.DetectContentType returns "video/mp4" for ISO-BMFF mp4 files; we
+	// only accept that exact prefix to keep the gate tight (no audio/* or
+	// application/* fallbacks).
+	if !strings.HasPrefix(sniff, "video/mp4") {
+		logError(r, "bad_request", errors.New("not mp4: "+sniff))
+		writeError(w, http.StatusBadRequest, "bad_request",
+			"uploaded bytes are not an mp4 video (sniffed: "+sniff+")")
+		return
+	}
+
+	sum := sha256.Sum256(buf)
+	hash := hex.EncodeToString(sum[:])
+
+	s.packsMu.Lock()
+	defer s.packsMu.Unlock()
+
+	pd, err := s.packDir(id)
+	if err != nil {
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "resolve pack dir")
+		return
+	}
+	nextVersion, err := s.nextVersionLocked(pd)
+	if err != nil {
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "next version")
+		return
+	}
+
+	storedFilename := "video." + allowedVideoExt[packType]
+	versionDir := filepath.Join(pd, strconv.Itoa(nextVersion))
+	contentDir := filepath.Join(versionDir, "content")
+	if err := os.MkdirAll(contentDir, 0o755); err != nil {
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "mkdir content")
+		return
+	}
+	contentPath := filepath.Join(contentDir, storedFilename)
+	if err := atomicWriteFile(contentPath, buf); err != nil {
+		logError(r, "internal_error", err)
+		writeError(w, http.StatusInternalServerError,
+			"internal_error", "write content")
+		return
+	}
+
+	manifest := PackManifest{
+		ID:        id,
+		Version:   nextVersion,
+		Type:      packType,
+		Filename:  storedFilename,
+		SHA256:    hash,
+		Size:      int64(len(buf)),
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := s.writeManifestAndIndex(w, r, pd, versionDir, manifest); err != nil {
+		return // writeManifestAndIndex already wrote the error response
+	}
+	s.pruneOldVersionsLocked(pd)
 }
 
 // uploadImagePack is the M5 image-only path, factored out so the dispatch
@@ -952,7 +1078,8 @@ func extractZipTo(zr *zip.Reader, destDir string) error {
 	return nil
 }
 
-// mimeForType returns the canonical Content-Type for an image pack type.
+// mimeForType returns the canonical Content-Type for a pack type
+// (image, zip, or video).
 func mimeForType(t string) string {
 	switch t {
 	case "png":
@@ -965,6 +1092,8 @@ func mimeForType(t string) string {
 		return "image/gif"
 	case "zip":
 		return "application/zip"
+	case "mp4":
+		return "video/mp4"
 	}
 	return "application/octet-stream"
 }

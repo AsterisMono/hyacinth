@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -8,20 +10,34 @@ import '../system/brightness.dart';
 import '../system/config_policy.dart';
 import '../system/cpu_governor.dart';
 import '../system/secure_settings.dart';
+import 'video_player.dart';
 import 'webview_controller.dart';
 
 /// Top-level fullscreen display surface.
 ///
-/// Given a resolved [HyacinthConfig], renders the configured URL in an
-/// InAppWebView. Immersive sticky mode is applied at construction and
-/// re-applied when the app resumes. A wakelock keeps the screen on while
-/// this widget is mounted.
+/// Given a resolved [HyacinthConfig], renders the configured content in
+/// either a [HyacinthWebView] (`https://` URLs and image / zip packs) or
+/// a [HyacinthVideoPlayer] (M16 mp4 video packs). Immersive sticky mode
+/// is applied at construction and re-applied when the app resumes. A
+/// wakelock keeps the screen on while this widget is mounted.
 ///
-/// **Reload guard (M3)**: the inner [HyacinthWebView] is constructed once
+/// **Renderer selection (M16)**: the inner renderer is chosen at
+/// [State.initState] (and re-chosen on each reload-guard rebuild) by
+/// inspecting [videoFile]. When [videoFile] is non-null, [HyacinthVideoPlayer]
+/// is mounted; otherwise [HyacinthWebView] is mounted against
+/// `config.content`. The choice is driven by [AppState], which resolves
+/// the pack manifest before transitioning to `displaying` and exposes the
+/// resolved local file when the manifest type is `mp4`.
+///
+/// **Reload guard (M3)**: the inner renderer widget is constructed once
 /// in [State.initState] and only re-created in [didUpdateWidget] when
 /// [shouldReloadWebView] returns true. Brightness/timeout-only config
-/// updates therefore rebuild the [DisplayPage] but leave the WebView's
-/// element/state untouched, so a playing video does not flicker.
+/// updates therefore rebuild the [DisplayPage] but leave the renderer's
+/// element/state untouched, so a playing video / WebView animation does
+/// not flicker. The same predicate covers both renderer flavours because
+/// the only thing that triggers a renderer swap is a `content` /
+/// `contentRevision` change, and `videoFile` is derived from that same
+/// pair upstream in [AppState].
 ///
 /// **M7 brightness/timeout**: on mount we snapshot the current system
 /// brightness mode + value + screen-off timeout (if `WRITE_SECURE_SETTINGS`
@@ -34,6 +50,7 @@ class DisplayPage extends StatefulWidget {
     super.key,
     required this.config,
     this.packCache,
+    this.videoFile,
     this.onBackRequested,
     this.screenPowerError,
     WindowBrightness? windowBrightness,
@@ -44,6 +61,12 @@ class DisplayPage extends StatefulWidget {
         _cpuGovernorInjected = cpuGovernor;
 
   final HyacinthConfig config;
+
+  /// M16 — when non-null, mount [HyacinthVideoPlayer] over this resolved
+  /// local file instead of the WebView. Set by [AppState] when the resolved
+  /// pack manifest type is `mp4`. Null for `https://` content URLs and for
+  /// image / zip packs (which still go through the WebView path).
+  final File? videoFile;
 
   /// M9.1 — most recent screen-power error from [AppState]. When non-null
   /// a red banner is rendered over the WebView with this string. The
@@ -109,7 +132,11 @@ class _SystemDisplaySnapshot {
 
 class _DisplayPageState extends State<DisplayPage>
     with WidgetsBindingObserver {
-  late HyacinthWebView _webView;
+  /// The active inner renderer — either a [HyacinthWebView] or a
+  /// [HyacinthVideoPlayer]. Reassigned only when the M3 reload guard
+  /// fires; brightness/timeout-only updates leave it untouched so the
+  /// underlying playback/scroll state survives.
+  late Widget _renderer;
   late final WindowBrightness _windowBrightness;
   late final SecureSettings _secureSettings;
   late final CpuGovernor _cpuGovernor;
@@ -125,14 +152,26 @@ class _DisplayPageState extends State<DisplayPage>
     _windowBrightness = widget._windowBrightness ?? WindowBrightness();
     _secureSettings = widget._secureSettings ?? SecureSettings();
     _cpuGovernor = widget._cpuGovernorInjected ?? CpuGovernor();
-    _webView = HyacinthWebView(
+    _renderer = _buildRenderer();
+    // Fire-and-forget. We deliberately don't await this in initState — the
+    // renderer mounts immediately and brightness/timeout are best-effort.
+    // ignore: discard_returned_future
+    _snapshotAndApply();
+  }
+
+  /// Build the inner renderer for the current widget config. Called from
+  /// [initState] and from the [didUpdateWidget] reload-guard branch.
+  /// Centralised so the renderer-selection logic lives in one place.
+  Widget _buildRenderer({Key? key}) {
+    final videoFile = widget.videoFile;
+    if (videoFile != null) {
+      return HyacinthVideoPlayer(key: key, file: videoFile);
+    }
+    return HyacinthWebView(
+      key: key,
       url: widget.config.content,
       packCache: widget.packCache,
     );
-    // Fire-and-forget. We deliberately don't await this in initState — the
-    // WebView mounts immediately and brightness/timeout are best-effort.
-    // ignore: discard_returned_future
-    _snapshotAndApply();
   }
 
   Future<void> _snapshotAndApply() async {
@@ -217,23 +256,24 @@ class _DisplayPageState extends State<DisplayPage>
   @override
   void didUpdateWidget(covariant DisplayPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // The reload guard. We only rebuild the inner WebView widget when
-    // content or revision actually changed. Brightness/timeout-only updates
-    // hit this branch with `shouldReloadWebView == false`, so the cached
-    // _webView is reused — Flutter sees the same widget instance, the
-    // element tree is preserved, and the underlying native WebView never
-    // sees a `loadUrl`.
+    // The reload guard. We only rebuild the inner renderer when content or
+    // revision actually changed. Brightness/timeout-only updates hit this
+    // branch with `shouldReloadWebView == false`, so the cached _renderer
+    // is reused — Flutter sees the same widget instance, the element tree
+    // is preserved, and the underlying native WebView / VideoPlayer never
+    // sees a reload. The same predicate covers both renderer flavours
+    // because `videoFile` is derived from `content` upstream in
+    // [AppState], so the only way `videoFile` changes is via a
+    // content/revision change that is already caught here.
     if (shouldReloadWebView(oldWidget.config, widget.config)) {
-      _webView = HyacinthWebView(
+      _renderer = _buildRenderer(
         // Bump the key so Flutter throws the old element away and the
-        // new InAppWebView mounts with the new URL. Without a fresh key
-        // identical-type widgets get reused and the URL change is silently
+        // new renderer mounts with the new URL / file. Without a fresh
+        // key identical-type widgets get reused and the change is silently
         // dropped.
         key: ValueKey<String>(
           '${widget.config.content}#${widget.config.contentRevision}',
         ),
-        url: widget.config.content,
-        packCache: widget.packCache,
       );
     }
     // Reapply policy (brightness / timeout) if any of the relevant fields
@@ -320,17 +360,19 @@ class _DisplayPageState extends State<DisplayPage>
           children: [
             // M12 — touch blocking. The kiosk runs bag-mounted, so accidental
             // bumps / strap rubs / dust should never interact with whatever
-            // the WebView is showing. Unconditional: the WebView is only ever
-            // mounted in the `displaying` phase, so tying the IgnorePointer
-            // to mount lifetime is equivalent to tying it to the phase. The
-            // back gesture is unaffected — Android delivers it as a route
-            // pop event via PopScope, not as a touch through the widget
-            // tree, so IgnorePointer is irrelevant to that path. The
-            // IgnorePointer wraps ONLY the WebView, not the screen-power
+            // the renderer is showing. Unconditional: the renderer is only
+            // ever mounted in the `displaying` phase, so tying the
+            // IgnorePointer to mount lifetime is equivalent to tying it to
+            // the phase. The back gesture is unaffected — Android delivers
+            // it as a route pop event via PopScope, not as a touch through
+            // the widget tree, so IgnorePointer is irrelevant to that path.
+            // The IgnorePointer wraps ONLY the renderer, not the screen-power
             // error banner below, so the banner (and any future tap target
-            // on it) stays interactive.
+            // on it) stays interactive. M16: this also wraps the
+            // [HyacinthVideoPlayer] when a video pack is showing, with no
+            // change required — touch-blocking is renderer-agnostic.
             SizedBox.expand(
-              child: IgnorePointer(ignoring: true, child: _webView),
+              child: IgnorePointer(ignoring: true, child: _renderer),
             ),
             if (widget.screenPowerError != null)
               Positioned(

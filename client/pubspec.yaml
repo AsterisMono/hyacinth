@@ -46,6 +46,11 @@ dependencies:
   crypto: ^3.0.6
   archive: ^4.0.7
   screen_brightness: ^2.1.7
+  # M16: native video pack rendering. chewie wraps video_player with the
+  # control surface we want (looping, no controls, no fullscreen) — only
+  # used inside DisplayPage when the resolved pack manifest type is mp4.
+  video_player: ^2.9.2
+  chewie: ^1.8.5
 
 dev_dependencies:
   flutter_test:

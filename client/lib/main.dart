@@ -130,6 +130,7 @@ class _HyacinthAppState extends State<HyacinthApp> with WidgetsBindingObserver {
                   return DisplayPage(
                     config: _appState.config!,
                     packCache: _appState.packCache,
+                    videoFile: _appState.videoFile,
                     onBackRequested: _appState.requestMainActivity,
                     screenPowerError: _appState.screenPowerError,
                   );

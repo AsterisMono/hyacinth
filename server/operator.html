@@ -784,10 +784,10 @@
     </div>
     <div class="upload-form">
       <md-outlined-text-field id="pack-id" label="Pack ID (slug)" placeholder="e.g. clock"></md-outlined-text-field>
-      <label class="file-picker" title="Choose a file (zip or image)" aria-label="Choose a file (zip or image)">
+      <label class="file-picker" title="Choose a file (zip, image, or video)" aria-label="Choose a file (zip, image, or video)">
         <md-icon>upload_file</md-icon>
-        <span class="file-label" id="pack-file-label">Choose a file (zip or image)</span>
-        <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif" />
+        <span class="file-label" id="pack-file-label">Choose a file (zip, image, or video)</span>
+        <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif,video/mp4" />
       </label>
     </div>
     <md-list id="pack-list"></md-list>
@@ -1102,7 +1102,12 @@
 
   function packSchemeUrl(p) {
     // Zip packs always have an index.html entry point at the archive
-    // root; image packs serve their single content file by name.
+    // root; image and video packs serve their single content file by
+    // name (image.<ext> or video.mp4). Video packs are recognised by
+    // the renderer-selection layer in DisplayPage and rendered via
+    // chewie/video_player rather than the WebView (M16) — the URL
+    // shape stays the same so the operator UI doesn't need a special
+    // case here.
     const path = p.type === 'zip' ? 'index.html' : p.filename;
     return 'hyacinth://pack/' + p.id + '/' + path;
   }
@@ -1166,7 +1171,12 @@
       const leading = document.createElement('div');
       leading.setAttribute('slot', 'start');
       const leadingIcon = document.createElement('md-icon');
-      leadingIcon.textContent = p.type === 'zip' ? 'folder_zip' : 'image';
+      // M16: video packs get their own icon. Falls back to 'image' for
+      // every image pack type (png/jpg/webp/gif).
+      let iconName = 'image';
+      if (p.type === 'zip') iconName = 'folder_zip';
+      else if (p.type === 'mp4') iconName = 'movie';
+      leadingIcon.textContent = iconName;
       leading.appendChild(leadingIcon);
 
       const h = document.createElement('div');
@@ -1209,6 +1219,8 @@
     if (mime === 'image/jpeg' || name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'jpg';
     if (mime === 'image/webp' || name.endsWith('.webp')) return 'webp';
     if (mime === 'image/gif' || name.endsWith('.gif')) return 'gif';
+    // M16: video pack support, mp4 only.
+    if (mime === 'video/mp4' || name.endsWith('.mp4')) return 'mp4';
     return null;
   }
 
@@ -1223,14 +1235,14 @@
     if (!id) {
       toast('Enter a pack id first', true);
       packFileInput.value = '';
-      packFileLabel.textContent = 'Choose a file (zip or image)';
+      packFileLabel.textContent = 'Choose a file (zip, image, or video)';
       return;
     }
     const type = packTypeFromFile(file);
     if (!type) {
-      toast('Unsupported file type — pick a zip or an image', true);
+      toast('Unsupported file type — pick a zip, image, or mp4 video', true);
       packFileInput.value = '';
-      packFileLabel.textContent = 'Choose a file (zip or image)';
+      packFileLabel.textContent = 'Choose a file (zip, image, or video)';
       return;
     }
     uploading = true;
@@ -1245,11 +1257,11 @@
       toast('Uploaded ' + id);
       packIdField.value = '';
       packFileInput.value = '';
-      packFileLabel.textContent = 'Choose a file (zip or image)';
+      packFileLabel.textContent = 'Choose a file (zip, image, or video)';
       loadPackList();
     } catch (e) {
       toast('Upload failed: ' + e.message, true);
-      packFileLabel.textContent = 'Choose a file (zip or image)';
+      packFileLabel.textContent = 'Choose a file (zip, image, or video)';
     } finally {
       uploading = false;
     }

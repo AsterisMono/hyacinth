@@ -82,6 +82,13 @@ class _FakePackManager extends PackManager {
   final List<String> calls = <String>[];
   final List<String?> syncCalls = <String?>[];
 
+  /// Override knobs (M16): set to e.g. `'mp4'` + `'video.mp4'` so the
+  /// returned manifest exercises the video-pack code path in
+  /// `AppState._ensurePackForConfig`. Defaults to a small png pack which
+  /// is what every pre-M16 test relied on.
+  String manifestType = 'png';
+  String manifestFilename = 'image.png';
+
   @override
   Future<List<String>> syncToServer({String? preserveId}) async {
     syncCalls.add(preserveId);
@@ -97,8 +104,8 @@ class _FakePackManager extends PackManager {
     return PackManifest(
       id: packId,
       version: 1,
-      type: 'png',
-      filename: 'image.png',
+      type: manifestType,
+      filename: manifestFilename,
       sha256: 'h',
       size: 0,
       createdAt: 't',
@@ -630,6 +637,96 @@ void main() {
           'foo-bar');
       expect(extractPackIdFromContent('hyacinth://other/x'), isNull);
       expect(extractPackIdFromContent(''), isNull);
+    });
+  });
+
+  // M16 — videoFile plumbing. The pack manager resolves to a manifest with
+  // type=mp4, and AppState looks up the on-disk file via PackCache so
+  // DisplayPage can pick it up via the videoFile getter and mount the
+  // native HyacinthVideoPlayer instead of the WebView.
+  group('M16 video pack videoFile plumbing', () {
+    const videoCfg = HyacinthConfig(
+      content: 'hyacinth://pack/loop/video.mp4',
+      contentRevision: 'r1',
+      brightness: 'auto',
+      screenTimeout: 'always-on',
+    );
+    const imageCfg = HyacinthConfig(
+      content: 'hyacinth://pack/neko/image.png',
+      contentRevision: 'r1',
+      brightness: 'auto',
+      screenTimeout: 'always-on',
+    );
+
+    /// Materialise a fake pack version directly on disk so
+    /// `PackCache.currentContentFileByPath` returns a real File. Mirrors
+    /// the on-disk layout the real PackManager would produce.
+    Future<PackCache> seedVideoPack(String packId) async {
+      final root = await Directory.systemTemp.createTemp('hy-m16-');
+      final packDir = Directory('${root.path}/packs/$packId/1/content')
+        ..createSync(recursive: true);
+      File('${packDir.path}/video.mp4').writeAsBytesSync([0, 1, 2, 3]);
+      File('${root.path}/packs/$packId/current').writeAsStringSync('1');
+      return PackCache(overrideRoot: root);
+    }
+
+    test('start() with mp4 pack populates videoFile from PackCache',
+        () async {
+      final cache = await seedVideoPack('loop');
+      final fake = _FakePackManager()..manifestType = 'mp4'
+        ..manifestFilename = 'video.mp4';
+      final state = AppState(
+        store: ConfigStore(),
+        client: _PackConfigClient(videoCfg),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        packCache: cache,
+        packManagerFactory: (_) => fake,
+        screenPower: _AdminActiveScreenPower(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.displaying);
+      expect(state.videoFile, isNotNull,
+          reason: 'mp4 manifest must populate videoFile');
+      expect(state.videoFile!.path, endsWith('/loop/1/content/video.mp4'));
+      expect(state.videoFile!.existsSync(), isTrue);
+      state.dispose();
+    });
+
+    test('start() with image pack leaves videoFile null', () async {
+      final fake = _FakePackManager(); // defaults to type=png
+      final state = AppState(
+        store: ConfigStore(),
+        client: _PackConfigClient(imageCfg),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        packManagerFactory: (_) => fake,
+        screenPower: _AdminActiveScreenPower(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.displaying);
+      expect(state.videoFile, isNull,
+          reason: 'image packs must NOT populate videoFile');
+      state.dispose();
+    });
+
+    test('start() with https content leaves videoFile null', () async {
+      final fake = _FakePackManager();
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        packManagerFactory: (_) => fake,
+        screenPower: _AdminActiveScreenPower(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.displaying);
+      expect(state.videoFile, isNull);
+      state.dispose();
     });
   });
 

@@ -586,3 +586,154 @@ func TestPostPackBumpsVersion(t *testing.T) {
 		t.Errorf("index latest version = %d, want 2", latest.Version)
 	}
 }
+
+// makeTinyMP4 returns the smallest byte sequence that Go's
+// http.DetectContentType sniffs as "video/mp4". The Go stdlib mp4 sniff
+// requires:
+//   - data >= 12 bytes
+//   - bytes 0..3 = big-endian box size, divisible by 4, <= len(data)
+//   - bytes 4..7 = "ftyp"
+//   - at least one 4-byte chunk starting at offset 8 (skipping offset 12,
+//     which is the minor version) whose first 3 bytes equal "mp4"
+//
+// We construct a 24-byte ftyp box: size=24, "ftyp", major brand "mp41",
+// minor version 0, compat brands "mp41" + "isom". The major brand at
+// offset 8 ("mp41") matches the "mp4" prefix on the first iteration.
+func makeTinyMP4(t *testing.T) []byte {
+	t.Helper()
+	out := make([]byte, 24)
+	// box size = 24
+	out[0], out[1], out[2], out[3] = 0x00, 0x00, 0x00, 0x18
+	// "ftyp"
+	copy(out[4:8], []byte("ftyp"))
+	// major brand "mp41"
+	copy(out[8:12], []byte("mp41"))
+	// minor version (skipped by the sniff loop)
+	copy(out[12:16], []byte{0, 0, 0, 0})
+	// compat brand "mp41"
+	copy(out[16:20], []byte("mp41"))
+	// compat brand "isom"
+	copy(out[20:24], []byte("isom"))
+	return out
+}
+
+func TestPostPackVideoMp4HappyPath(t *testing.T) {
+	srv, mux := newPacksTestServer(t)
+
+	payload := makeTinyMP4(t)
+	body, ct := makePackUpload(t, "loop", "mp4", "fish.mp4", payload)
+	req := httptest.NewRequest(http.MethodPost, "/packs", body)
+	req.Header.Set("Content-Type", ct)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var got PackManifest
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("response JSON: %v", err)
+	}
+	if got.ID != "loop" || got.Version != 1 || got.Type != "mp4" || got.Filename != "video.mp4" {
+		t.Errorf("manifest mismatch: %+v", got)
+	}
+	if got.Size != int64(len(payload)) {
+		t.Errorf("size = %d, want %d", got.Size, len(payload))
+	}
+	want := sha256.Sum256(payload)
+	if got.SHA256 != hex.EncodeToString(want[:]) {
+		t.Errorf("sha256 mismatch")
+	}
+
+	contentPath := filepath.Join(srv.dataDir, "packs", "loop", "1", "content", "video.mp4")
+	if _, err := os.Stat(contentPath); err != nil {
+		t.Errorf("content file not on disk: %v", err)
+	}
+	manifestPath := filepath.Join(srv.dataDir, "packs", "loop", "1", "manifest.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Errorf("manifest not on disk: %v", err)
+	}
+}
+
+func TestPostPackVideoMp4WrongExtension(t *testing.T) {
+	_, mux := newPacksTestServer(t)
+	payload := makeTinyMP4(t)
+	// Declared type=mp4 but filename ends in .mov — should be rejected.
+	body, ct := makePackUpload(t, "loop", "mp4", "fish.mov", payload)
+	req := httptest.NewRequest(http.MethodPost, "/packs", body)
+	req.Header.Set("Content-Type", ct)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestPostPackVideoMp4BogusBytes(t *testing.T) {
+	_, mux := newPacksTestServer(t)
+	// Plain text body with mp4 type + .mp4 extension. Sniff should reject.
+	body, ct := makePackUpload(t, "loop", "mp4", "fish.mp4", []byte("this is definitely not an mp4 file"))
+	req := httptest.NewRequest(http.MethodPost, "/packs", body)
+	req.Header.Set("Content-Type", ct)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestGetPackVideoDownloadServesMp4Bytes(t *testing.T) {
+	_, mux := newPacksTestServer(t)
+
+	payload := makeTinyMP4(t)
+	body, ct := makePackUpload(t, "loop", "mp4", "fish.mp4", payload)
+	req := httptest.NewRequest(http.MethodPost, "/packs", body)
+	req.Header.Set("Content-Type", ct)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("upload status = %d", rr.Code)
+	}
+
+	dlReq := httptest.NewRequest(http.MethodGet, "/packs/loop/download", nil)
+	dlRR := httptest.NewRecorder()
+	mux.ServeHTTP(dlRR, dlReq)
+	if dlRR.Code != http.StatusOK {
+		t.Fatalf("download status = %d", dlRR.Code)
+	}
+	if got := dlRR.Header().Get("Content-Type"); got != "video/mp4" {
+		t.Errorf("Content-Type = %q, want video/mp4", got)
+	}
+	if !bytes.Equal(dlRR.Body.Bytes(), payload) {
+		t.Errorf("download body bytes do not match upload")
+	}
+}
+
+func TestValidPackTypeAcceptsMp4(t *testing.T) {
+	if !validPackType("mp4") {
+		t.Errorf("validPackType(\"mp4\") = false, want true")
+	}
+	if !validVideoPackType("mp4") {
+		t.Errorf("validVideoPackType(\"mp4\") = false, want true")
+	}
+	if validVideoPackType("mov") {
+		t.Errorf("validVideoPackType(\"mov\") = true, want false")
+	}
+	if mimeForType("mp4") != "video/mp4" {
+		t.Errorf("mimeForType(\"mp4\") = %q, want video/mp4", mimeForType("mp4"))
+	}
+}
+
+func TestOperatorHTMLContainsMp4AutoDetect(t *testing.T) {
+	// Cheap regression test for the M16 packTypeFromFile() update in
+	// operator.html — the inlined indexHTML must mention 'video/mp4' and
+	// 'mp4' so the auto-detect helper recognises a video upload.
+	if !strings.Contains(indexHTML, "'video/mp4'") {
+		t.Errorf("indexHTML does not mention 'video/mp4' in packTypeFromFile")
+	}
+	if !strings.Contains(indexHTML, "'mp4'") {
+		t.Errorf("indexHTML does not mention 'mp4' as a return value")
+	}
+}

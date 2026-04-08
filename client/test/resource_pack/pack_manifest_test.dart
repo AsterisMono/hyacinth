@@ -68,6 +68,43 @@ void main() {
       expect(PackManifest.fromJson(m.toJson()), m);
     });
 
+    // M16 — isVideo flag drives DisplayPage's renderer selection.
+    test('isVideo true for mp4, false for image / zip', () {
+      const mp4 = PackManifest(
+        id: 'loop',
+        version: 1,
+        type: 'mp4',
+        filename: 'video.mp4',
+        sha256: 'a',
+        size: 100,
+        createdAt: 't',
+      );
+      expect(mp4.isVideo, isTrue);
+      expect(mp4.isZip, isFalse);
+
+      const png = PackManifest(
+        id: 'cat',
+        version: 1,
+        type: 'png',
+        filename: 'image.png',
+        sha256: 'b',
+        size: 50,
+        createdAt: 't',
+      );
+      expect(png.isVideo, isFalse);
+
+      const zip = PackManifest(
+        id: 'site',
+        version: 1,
+        type: 'zip',
+        filename: 'index.html',
+        sha256: 'c',
+        size: 200,
+        createdAt: 't',
+      );
+      expect(zip.isVideo, isFalse);
+    });
+
     test('toString includes the id and version', () {
       const m = PackManifest(
         id: 'k',
