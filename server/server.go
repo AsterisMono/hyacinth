@@ -664,6 +664,19 @@ const indexHTML = `<!DOCTYPE html>
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /* Defensive: clip horizontal overflow at the document root so a
+       single offending child element (e.g. a long status URL or a
+       native control with locale-dependent intrinsic width) can't
+       turn the whole page into a horizontally-scrolling mess. */
+    overflow-x: clip;
+  }
+  /* Material Web text fields and selects are inline-flex by default
+     and won't stretch to fill a grid/flex column without an explicit
+     width. Without this, the Pack ID field on a phone keeps its
+     intrinsic min-width and pushes the parent card past the viewport. */
+  md-outlined-text-field,
+  md-outlined-select {
+    width: 100%;
   }
 
   /* ----- Sticky status bar ----- */
@@ -978,12 +991,34 @@ const indexHTML = `<!DOCTYPE html>
     background: var(--md-sys-color-surface-container-low);
     color: var(--md-sys-color-on-surface-variant);
     font-size: 13px;
+    cursor: pointer;
+    min-width: 0;
   }
-  .file-input-wrap input[type="file"] {
+  .file-input-wrap:hover {
+    background: var(--md-sys-color-surface-container);
+  }
+  .file-input-wrap md-icon {
+    flex: 0 0 auto;
+    color: var(--md-sys-color-primary);
+  }
+  .file-input-wrap .file-label {
     flex: 1;
     min-width: 0;
-    color: inherit;
-    font: inherit;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* The native input is hidden but still functional — clicking the
+     wrapping <label> opens the file picker, and our JS reads .files. */
+  .file-input-wrap input[type="file"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
   }
   md-list#pack-list {
     --md-list-container-color: transparent;
@@ -1161,6 +1196,7 @@ const indexHTML = `<!DOCTYPE html>
       <md-outlined-text-field id="pack-id" label="Pack ID (slug)"></md-outlined-text-field>
       <label class="file-input-wrap">
         <md-icon>upload_file</md-icon>
+        <span class="file-label" id="pack-file-label">Choose a file (zip or image)</span>
         <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif" />
       </label>
     </div>
@@ -1440,9 +1476,18 @@ const indexHTML = `<!DOCTYPE html>
   // packTypeSel removed in M9.3 — type is now sniffed from the
   // uploaded file's MIME / extension via packTypeFromFile().
   const packFileInput = $('pack-file');
+  const packFileLabel = $('pack-file-label');
   const packUploadBtn = $('pack-upload-btn');
   const packListEl    = $('pack-list');
   const packEmptyEl   = $('pack-empty');
+
+  // Update the visible filename label whenever the user picks a file.
+  // The native file input is hidden via CSS so we manage all of its
+  // user-facing affordance ourselves.
+  packFileInput.addEventListener('change', function() {
+    const f = packFileInput.files && packFileInput.files[0];
+    packFileLabel.textContent = f ? f.name : 'Choose a file (zip or image)';
+  });
 
   function humanSize(n) {
     if (n < 1024) return n + ' B';
@@ -1574,6 +1619,7 @@ const indexHTML = `<!DOCTYPE html>
       toast('Uploaded ' + id);
       packIdField.value = '';
       packFileInput.value = '';
+      packFileLabel.textContent = 'Choose a file (zip or image)';
       loadPackList();
     } catch (e) {
       toast('Upload failed: ' + e.message, true);
