@@ -783,28 +783,23 @@ const indexHTML = `<!DOCTYPE html>
   @media (min-width: 720px) {
     .grid {
       grid-template-columns: 1fr 1fr;
-      /* Order: Display | Packs (top row), Power | Live (bottom row).
-         Source order in markup follows the same Display → Packs →
-         Power → Live sequence so the single-column phone view
-         matches without needing source-order overrides. */
+      /* M9.7: Power section folded into Display, leaving three
+         sections. Packs spans both rows on the right because its
+         list grows taller than Display + Live combined.   */
       grid-template-areas:
         "display packs"
-        "power   live";
+        "live    packs";
     }
     .sect-display { grid-area: display; }
     .sect-packs   { grid-area: packs; }
-    .sect-power   { grid-area: power; }
     .sect-live    { grid-area: live; }
   }
   @media (min-width: 1100px) {
     .grid {
-      /* Display on the left (the focal section, taller) spans both
-         rows. Packs in the middle column also spans both rows since
-         the pack list is the second-tallest piece. Power and Live
-         stack on the right. */
+      /* Three even-ish columns, Packs the widest because the list
+         is the most content-heavy section. */
       grid-template-columns: 1fr 1.4fr 1fr;
       grid-template-areas:
-        "display packs power"
         "display packs live";
     }
   }
@@ -824,8 +819,7 @@ const indexHTML = `<!DOCTYPE html>
   }
   .sect-display { background: var(--md-sys-color-surface-container-high); animation-delay: 0ms; }
   .sect-packs   { animation-delay: 60ms; }
-  .sect-power   { animation-delay: 120ms; }
-  .sect-live    { animation-delay: 180ms; }
+  .sect-live    { animation-delay: 120ms; }
   @keyframes hy-rise {
     to { opacity: 1; transform: none; }
   }
@@ -869,8 +863,15 @@ const indexHTML = `<!DOCTYPE html>
   .actions {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
   }
+  /* The Display section's actions row groups the imperative screen
+     buttons (left) with the persistent Save button (right). The
+     spacer pushes Save away from the screen pair so the visual
+     hierarchy reads left-to-right: "do once" → "do once" → "save". */
+  .actions .spacer { flex: 1 1 auto; min-width: 8px; }
   .field-label {
     font-size: 13px;
     font-weight: 500;
@@ -903,27 +904,6 @@ const indexHTML = `<!DOCTYPE html>
     letter-spacing: 0.12em;
     color: var(--md-sys-color-primary);
     text-transform: uppercase;
-  }
-
-  /* ----- Power section ----- */
-  .power-buttons {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    border-radius: 9999px;
-    background: var(--md-sys-color-secondary-container);
-    color: var(--md-sys-color-on-secondary-container);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    width: max-content;
-    max-width: 100%;
   }
 
   /* ----- Live updates ----- */
@@ -1162,6 +1142,15 @@ const indexHTML = `<!DOCTYPE html>
       <md-select-option value="30m"><div slot="headline">30 minutes</div></md-select-option>
     </md-outlined-select>
     <div class="actions">
+      <md-outlined-button id="screen-off-btn" title="Imperative — fires once, not persisted">
+        <md-icon slot="icon">dark_mode</md-icon>
+        Screen off
+      </md-outlined-button>
+      <md-outlined-button id="screen-on-btn" title="Imperative — fires once, not persisted">
+        <md-icon slot="icon">light_mode</md-icon>
+        Screen on
+      </md-outlined-button>
+      <span class="spacer"></span>
       <md-filled-button id="save-btn">Save</md-filled-button>
     </div>
   </section>
@@ -1183,24 +1172,6 @@ const indexHTML = `<!DOCTYPE html>
       <md-icon>inventory_2</md-icon>
       <div class="pack-empty-text">No packs uploaded yet</div>
     </div>
-  </section>
-
-  <section class="card sect-power" aria-labelledby="h-power">
-    <div class="card-head">
-      <h2 id="h-power">Power</h2>
-      <span class="chip">Imperative &mdash; fires once and forgets</span>
-    </div>
-    <div class="power-buttons">
-      <md-filled-button id="screen-on-btn">
-        <md-icon slot="icon">light_mode</md-icon>
-        Screen on
-      </md-filled-button>
-      <md-outlined-button id="screen-off-btn">
-        <md-icon slot="icon">dark_mode</md-icon>
-        Screen off
-      </md-outlined-button>
-    </div>
-    <p class="muted" style="margin:0;">State isn&rsquo;t persisted &mdash; the tablet obeys immediately but the request isn&rsquo;t replayed on reconnect.</p>
   </section>
 
   <section class="card sect-live" aria-labelledby="h-live">
