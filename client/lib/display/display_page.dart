@@ -318,7 +318,20 @@ class _DisplayPageState extends State<DisplayPage>
         backgroundColor: Colors.black,
         body: Stack(
           children: [
-            SizedBox.expand(child: _webView),
+            // M12 — touch blocking. The kiosk runs bag-mounted, so accidental
+            // bumps / strap rubs / dust should never interact with whatever
+            // the WebView is showing. Unconditional: the WebView is only ever
+            // mounted in the `displaying` phase, so tying the IgnorePointer
+            // to mount lifetime is equivalent to tying it to the phase. The
+            // back gesture is unaffected — Android delivers it as a route
+            // pop event via PopScope, not as a touch through the widget
+            // tree, so IgnorePointer is irrelevant to that path. The
+            // IgnorePointer wraps ONLY the WebView, not the screen-power
+            // error banner below, so the banner (and any future tap target
+            // on it) stays interactive.
+            SizedBox.expand(
+              child: IgnorePointer(ignoring: true, child: _webView),
+            ),
             if (widget.screenPowerError != null)
               Positioned(
                 top: 0,

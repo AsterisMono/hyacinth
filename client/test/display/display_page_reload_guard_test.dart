@@ -143,4 +143,39 @@ void main() {
     final widgetAfter = tester.widget(find.byType(HyacinthWebView));
     expect(identical(widgetAfter, widgetBefore), isFalse);
   });
+
+  // M12 — the WebView is wrapped in an unconditional IgnorePointer so bag
+  // bumps / dust / strap rubs can't interact with whatever's displayed.
+  // The wrapping is inside the DisplayPage's Stack, scoped only to the
+  // WebView subtree (the screen-power error banner is a sibling in the
+  // Stack and stays tappable).
+  testWidgets('M12: IgnorePointer wraps the WebView and ignores touches',
+      (tester) async {
+    const cfg = HyacinthConfig(
+      content: 'https://a.example/',
+      contentRevision: 'r1',
+      brightness: 'auto',
+      screenTimeout: 'always-on',
+    );
+    await tester.pumpWidget(MaterialApp(home: DisplayPage(config: cfg)));
+
+    // Flutter's Material framework (Scaffold et al.) introduces several
+    // IgnorePointer widgets with `ignoring: false` for internal layout
+    // reasons, so we can't `findsOneWidget` on the bare type — instead
+    // pick the one with `ignoring: true`, which is unambiguously ours.
+    final ourIgnoreFinder = find.byWidgetPredicate(
+      (w) => w is IgnorePointer && w.ignoring == true,
+    );
+    expect(ourIgnoreFinder, findsOneWidget);
+
+    // The WebView must be a descendant of our IgnorePointer — not a
+    // sibling in the Stack.
+    expect(
+      find.descendant(
+        of: ourIgnoreFinder,
+        matching: find.byType(HyacinthWebView),
+      ),
+      findsOneWidget,
+    );
+  });
 }
