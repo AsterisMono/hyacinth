@@ -129,10 +129,9 @@ Iterate on the actual tablet with HMR (recommended):
 When the pack is ready, publish a release-ready zip to the kiosk:
   just pack-upload <id>   # build, lint, zip, and POST
 
-Prerequisite for live on-device dev: the tablet must be running a debug-build
-APK (`just install`). The release NSC blocks cleartext HTTP to LAN IPs; the
-debug NSC overlay permits it. A release-build tablet will silently refuse to
-load the dev URL and the pack will appear blank.
+Any installed Hyacinth APK (debug or release) works with `pack-dev` —
+M15.3 dropped the network security config so cleartext HTTP to LAN
+IPs is allowed in both build variants.
 ```
 
 Don't run any of those commands automatically — `vite dev` blocks the terminal, and `pack-upload` will fail with a confusing curl error if the user hasn't started the server yet. Let them drive the next step.
@@ -149,7 +148,7 @@ The recipes use `pnpm`, not `npm` (install via `corepack enable && corepack prep
 
 Once the scaffold is in place, the **primary iteration loop** is `just pack-dev <id>` against the actual tablet. The recipe auto-detects the dev machine's LAN IP relative to `HYACINTH_SERVER`, pushes `http://<dev-ip>:5173/` onto the kiosk's `/config.content` so the tablet's WebView loads the running Vite dev server directly, and Vite HMR patches modules in place on every source save — edit a CSS file, blink, the change is on the tablet. Ctrl-C the recipe to stop and restore the previous kiosk content (an EXIT trap handles this on normal exit, errors, and Ctrl-C alike).
 
-**Prerequisite for the on-device path**: the tablet must be running a *debug-build APK* (`just install`, NOT `just apk-install` which is release). The release NSC at `client/android/app/src/main/res/xml/network_security_config.xml` was locked down by M8 Track C and only permits cleartext HTTP for `localhost` + `10.0.2.2`. The debug NSC overlay at `client/android/app/src/debug/res/xml/network_security_config.xml` (added in M15.1) permits cleartext globally for LAN dev. Android's build-type resource merging picks the right NSC per variant; no manifest change needed. A release-build tablet will silently refuse to load the Vite dev URL and the pack will appear blank — flash a debug APK once and you're set.
+**No build-variant prerequisite**: any installed Hyacinth APK works with `pack-dev`. M15.3 dropped the M8/M15.1 network security config story entirely — the release manifest now declares `android:usesCleartextTraffic="true"` and ships no NSC, so debug and release builds both accept cleartext HTTP to LAN IPs. Whether the tablet is running `just install` (debug) or `just apk-install` (release) makes no difference here.
 
 **Fallback path** for when you don't have the tablet handy: if `HYACINTH_SERVER` is unset, unreachable, or the LAN-IP detection fails, `pack-dev` prints a warning and falls through to plain `pnpm exec vite` on `http://localhost:5173/` for desktop-browser preview. No env-var juggling needed — same recipe, automatic fallback.
 

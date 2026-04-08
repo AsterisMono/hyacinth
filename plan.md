@@ -14,7 +14,6 @@ Goals:
 hyacinth/
 ├── client/                       # Flutter app
 │   ├── android/app/src/main/AndroidManifest.xml
-│   ├── android/app/src/main/res/xml/network_security_config.xml
 │   ├── pubspec.yaml
 │   └── lib/
 │       ├── main.dart                    # Entry, routing on AppState
@@ -56,7 +55,7 @@ hyacinth/
 - Permissions: `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `WAKE_LOCK`, `POST_NOTIFICATIONS` (API 33+), `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `FOREGROUND_SERVICE`, **`WRITE_SECURE_SETTINGS`** (granted via `adb`/root `pm grant io.hyacinth android.permission.WRITE_SECURE_SETTINGS`). (Note: **`DISABLE_KEYGUARD`** appeared in earlier drafts of this doc; we ended up not using it — M9's Device Admin + `FULL_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP` wake path doesn't need it.)
 - Main `<activity>` gets the standard `MAIN/LAUNCHER` intent filter. **No `CATEGORY_HOME`**: M4.7 tried the launcher path, M4.8 stripped it (see those milestones for the rationale), and M8.2 restored the "press Back to access settings" UX via Activity-level `PopScope` instead. Hyacinth is a normal app launched from the drawer; don't re-add the HOME filter. `showWhenLocked="true"` + `turnScreenOn="true"` are set so content reappears when waking (added in M9).
 - `android:launchMode="singleTask"`, `excludeFromRecents="true"`, `resizeableActivity="false"`.
-- `network_security_config.xml` permitting cleartext only for private IP ranges.
+- `android:usesCleartextTraffic="true"` on `<application>` (M15.3) — Hyacinth lives entirely inside one private LAN, the local Go server and every realistic content URL are HTTP, and the M8/M15.1 NSC story was unwound rather than maintained as theatre.
 - Custom `hyacinth://` is intercepted **inside** the WebView — does NOT need a manifest filter.
 - **Device Admin receiver**: `<receiver android:name=".HyacinthDeviceAdminReceiver" android:permission="android.permission.BIND_DEVICE_ADMIN">` with `DEVICE_ADMIN_ENABLED` intent filter. Current `device_admin.xml` declares only `force-lock` (powering the M9 `lockNow()` path); the earlier draft of this doc also mentioned `disable-keyguard-features`, which was never implemented — see the M7.5 fallthrough note in M11. User activates the receiver via `DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN` in onboarding.
 
@@ -134,7 +133,7 @@ Stdlib `net/http` + `github.com/gorilla/websocket`. Single file. `data/config.js
 - **Root + CPU governor** (`powerProfile: "ultra-low"`): via a `Runtime.exec("su")` MethodChannel helper, write `powersave` to `/sys/devices/system/cpu/cpufreq/policy*/scaling_governor` and the lowest value from `scaling_available_frequencies` to `scaling_max_freq`. Restore previous values on teardown / when leaving Displaying. Treat root as optional — gracefully no-op (with health warning) if `su` fails.
 - **Keep awake**: `wakelock_plus` + `FLAG_KEEP_SCREEN_ON`. Battery-opt exemption is required.
 - **WS liveness**: app-side ping ~20s, exponential backoff with jitter. Add a foreground service later (M8) to hold the WS during Doze.
-- **Cleartext**: scoped via `network_security_config.xml`, not global.
+- **Cleartext**: global via `android:usesCleartextTraffic="true"` (M15.3 — see that milestone for why the M8/M15.1 NSC story was unwound).
 - **WebView security**: disable `file://`, allow only `https:` and the custom scheme.
 - **Pack atomicity**: never unzip into `current/`; always to a version dir, then swap pointer.
 
@@ -202,7 +201,6 @@ After M3 you have a usable always-on display driven by the server. M5–M6 add o
 ## Critical Files
 - `server/server.go`
 - `client/android/app/src/main/AndroidManifest.xml`
-- `client/android/app/src/main/res/xml/network_security_config.xml`
 - `client/lib/main.dart`
 - `client/lib/app_state.dart`
 - `client/lib/display/webview_controller.dart` (the reload-guard lives here)

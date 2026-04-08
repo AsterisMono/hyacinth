@@ -82,22 +82,30 @@ If no token is set at startup, the server logs a `WARNING` line on the
 first line of output. That's intentional — it's a reminder that the LAN
 is the only thing standing between strangers and your config.
 
-## Network security config (M8)
+## Cleartext on the LAN (M15.3)
 
-Android 9+ blocks plain-HTTP traffic by default. Hyacinth ships with a
-`network_security_config.xml` permitting cleartext for `localhost` and
-`10.0.2.2` (the Android emulator's loopback). For a production tablet
-on your home Wi-Fi, you have two options:
+Hyacinth assumes a private home Wi-Fi as its entire universe. The
+WebView talks to its own local Go server on `localhost`, the operator
+phone hits that same server over plain HTTP from across the room, and
+the realistic content URLs the kiosk loads (a Vite dev server during
+pack iteration, a local home automation dashboard, an in-house photo
+frame source) all live on the same LAN over HTTP. So the release APK
+declares `android:usesCleartextTraffic="true"` on `<application>` and
+ships no `network_security_config.xml` at all — debug and release
+builds are now in lockstep, and `pack-dev` works against either.
 
-1. **Add your server's IP/hostname** to
-   `client/android/app/src/main/res/xml/network_security_config.xml` as
-   another `<domain>` entry inside the cleartext `<domain-config>` block,
-   then rebuild the APK. Android's NSC schema does not accept CIDR
-   ranges, so you have to enumerate hosts explicitly.
-2. **Run the server over HTTPS** (e.g. behind a self-signed cert
-   distributed via the system trust store). Then delete the cleartext
-   `<domain-config>` block entirely. This is the right answer for any
-   tablet that ever leaves the house.
+This wasn't always the shape. M8 originally added an NSC that
+whitelisted cleartext for `localhost` + `10.0.2.2` only and locked
+down everything else, on the theory that a hardened HTTPS deployment
+might want it later. M15.1 then had to bolt a debug-build overlay on
+top because release tablets couldn't reach the Vite dev server. M15.3
+collapsed both into one honest decision: a tablet that lives inside
+one Wi-Fi gets cleartext. A tablet that ever leaves the house wants
+TLS — terminate it at the kiosk server (or in front of it), and add a
+fresh `network_security_config.xml` with
+`cleartextTrafficPermitted="false"` to re-enable the platform's
+blocking. The un-do path is one XML file and one manifest attribute
+flip.
 
 ## Screen on/off
 
@@ -170,7 +178,7 @@ Major milestones (the small `MX.y` follow-ups are documented in `plan.md`):
 - [x] M5 — Resource packs (image)
 - [x] M6 — Resource packs (zip)
 - [x] M7 — Brightness + timeout polish
-- [x] M8 — Hardening: server error paths, auth, NSC, foreground service, pack GC (`+M8.1` root self-grant, `+M8.2` back gesture → MainActivity, `+M8.3` pack cache sync + wipe, `+M8.4` cached packs display)
+- [x] M8 — Hardening: server error paths, auth, NSC, foreground service, pack GC (`+M8.1` root self-grant, `+M8.2` back gesture → MainActivity, `+M8.3` pack cache sync + wipe, `+M8.4` cached packs display, `+M15.3` NSC removed)
 - [x] M9 — Remote screen on/off (root + Device Admin) (`+M9.1–M9.8` operator UI redesign and iteration)
 - [x] M10 — GitHub Actions CI + tag-driven releases (analyze / test / apk on every push and PR; `release` job publishes `hyacinth-<version>.apk` to GitHub Releases on `v*` tags)
 - [x] M11 — Auto powersave CPU governor on display (root-gated, tied to the `displaying` phase lifecycle — no operator UI, no config field; finishes the M7.5 power-profile half)
