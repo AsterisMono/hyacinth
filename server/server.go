@@ -1200,12 +1200,6 @@ const indexHTML = `<!DOCTYPE html>
         <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif" />
       </label>
     </div>
-    <div class="actions">
-      <md-filled-button id="pack-upload-btn">
-        <md-icon slot="icon">cloud_upload</md-icon>
-        Upload
-      </md-filled-button>
-    </div>
     <md-list id="pack-list"></md-list>
     <div id="pack-empty" class="pack-empty" hidden>
       <md-icon>inventory_2</md-icon>
@@ -1367,7 +1361,10 @@ const indexHTML = `<!DOCTYPE html>
   }
 
   // ----- Save -----
-  saveBtn.addEventListener('click', async () => {
+  // Extracted into a function so the pack-row "Use as content" action
+  // can call it directly to push the new content URL without making
+  // the operator click Save as a second step.
+  async function saveConfig() {
     saveBtn.disabled = true;
     try {
       const r = await fetch('/config', {
@@ -1380,12 +1377,15 @@ const indexHTML = `<!DOCTYPE html>
       lastServerCfg = stored;
       applyConfigToForm(stored); // resets dirty
       toast('Saved');
+      return true;
     } catch (e) {
       toast('Save failed: ' + e.message, true);
+      return false;
     } finally {
       saveBtn.disabled = false;
     }
-  });
+  }
+  saveBtn.addEventListener('click', saveConfig);
 
   // ----- Initial GET /config -----
   async function loadInitial() {
@@ -1477,16 +1477,18 @@ const indexHTML = `<!DOCTYPE html>
   // uploaded file's MIME / extension via packTypeFromFile().
   const packFileInput = $('pack-file');
   const packFileLabel = $('pack-file-label');
-  const packUploadBtn = $('pack-upload-btn');
+  // packUploadBtn removed in M9.5 — uploads fire on file selection.
   const packListEl    = $('pack-list');
   const packEmptyEl   = $('pack-empty');
 
-  // Update the visible filename label whenever the user picks a file.
+  // M9.5: picking a file triggers the upload immediately. The label
+  // is updated transiently inside uploadPack() (Uploading… → reset).
   // The native file input is hidden via CSS so we manage all of its
   // user-facing affordance ourselves.
   packFileInput.addEventListener('change', function() {
     const f = packFileInput.files && packFileInput.files[0];
-    packFileLabel.textContent = f ? f.name : 'Choose a file (zip or image)';
+    if (!f) return;
+    uploadPack(f);
   });
 
   function humanSize(n) {
@@ -1502,11 +1504,14 @@ const indexHTML = `<!DOCTYPE html>
     return 'hyacinth://pack/' + p.id + '/' + path;
   }
 
-  function setContentToPackUrl(p) {
+  // M9.5: clicking the play_arrow on a pack row sets the content URL
+  // AND immediately publishes the config — no second step. Same goes
+  // for any other "promote this thing to live" action we might add.
+  async function setContentToPackUrl(p) {
     contentField.value = packSchemeUrl(p);
-    markDirty();
     updateStatusContent(contentField.value);
-    toast('Set content URL \u2014 click Save to push.');
+    const ok = await saveConfig();
+    if (ok) toast('Now showing ' + p.id);
   }
 
   async function deletePack(id) {
@@ -1598,17 +1603,29 @@ const indexHTML = `<!DOCTYPE html>
     return null;
   }
 
-  packUploadBtn.addEventListener('click', async () => {
+  // M9.5: upload fires immediately on file selection — no separate
+  // Upload button. The Pack ID must already be filled; if not, we
+  // toast an error and clear the file selection so the user can
+  // re-pick after entering an id.
+  let uploading = false;
+  async function uploadPack(file) {
+    if (uploading) return;
     const id = (packIdField.value || '').trim();
-    const file = packFileInput.files && packFileInput.files[0];
-    if (!id) { toast('Enter a pack id', true); return; }
-    if (!file) { toast('Choose a file', true); return; }
+    if (!id) {
+      toast('Enter a pack id first', true);
+      packFileInput.value = '';
+      packFileLabel.textContent = 'Choose a file (zip or image)';
+      return;
+    }
     const type = packTypeFromFile(file);
     if (!type) {
       toast('Unsupported file type — pick a zip or an image', true);
+      packFileInput.value = '';
+      packFileLabel.textContent = 'Choose a file (zip or image)';
       return;
     }
-    packUploadBtn.disabled = true;
+    uploading = true;
+    packFileLabel.textContent = 'Uploading ' + file.name + '\u2026';
     try {
       const fd = new FormData();
       fd.append('id', id);
@@ -1623,10 +1640,11 @@ const indexHTML = `<!DOCTYPE html>
       loadPackList();
     } catch (e) {
       toast('Upload failed: ' + e.message, true);
+      packFileLabel.textContent = 'Choose a file (zip or image)';
     } finally {
-      packUploadBtn.disabled = false;
+      uploading = false;
     }
-  });
+  }
 
   // ----- Boot -----
   loadInitial().then(loadPackList).then(connectWS);
