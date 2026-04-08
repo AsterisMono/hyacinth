@@ -173,8 +173,12 @@ func TestGetIndexReturnsHTML(t *testing.T) {
 		"md-slider",
 		"md-switch",
 		"md-outlined-select",
+		"md-list",
 		"--md-sys-color-primary",
 		"fetch('/config'",
+		// M9.2 redesign pins: sticky status bar and the display-face font.
+		`id="status-bar"`,
+		"Fraunces",
 	}
 	for _, m := range musts {
 		if !strings.Contains(body, m) {

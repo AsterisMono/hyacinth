@@ -549,6 +549,9 @@ const indexHTML = `<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Hyacinth Operator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,700;9..144,800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script type="importmap">
 {
   "imports": {
@@ -562,7 +565,7 @@ const indexHTML = `<!DOCTYPE html>
   document.adoptedStyleSheets.push(typescaleStyles.styleSheet);
 </script>
 <style>
-  /* Material 3 color tokens — Hyacinth purple primary (#7E57C2). */
+  /* Material 3 color tokens — Hyacinth purple primary seed. Light scheme. */
   :root {
     --md-sys-color-primary: #6750A4;
     --md-sys-color-on-primary: #FFFFFF;
@@ -570,116 +573,274 @@ const indexHTML = `<!DOCTYPE html>
     --md-sys-color-on-primary-container: #21005D;
     --md-sys-color-secondary: #625B71;
     --md-sys-color-on-secondary: #FFFFFF;
+    --md-sys-color-secondary-container: #E8DEF8;
+    --md-sys-color-on-secondary-container: #1D192B;
+    --md-sys-color-tertiary: #7D5260;
+    --md-sys-color-on-tertiary: #FFFFFF;
+    --md-sys-color-background: #FEF7FF;
+    --md-sys-color-on-background: #1D1B20;
     --md-sys-color-surface: #FEF7FF;
     --md-sys-color-on-surface: #1D1B20;
     --md-sys-color-surface-variant: #E7E0EC;
     --md-sys-color-on-surface-variant: #49454F;
+    --md-sys-color-surface-dim: #DED8E1;
+    --md-sys-color-surface-bright: #FEF7FF;
+    --md-sys-color-surface-container-lowest: #FFFFFF;
+    --md-sys-color-surface-container-low: #F7F2FA;
     --md-sys-color-surface-container: #F3EDF7;
     --md-sys-color-surface-container-high: #ECE6F0;
     --md-sys-color-surface-container-highest: #E6E0E9;
     --md-sys-color-outline: #79747E;
     --md-sys-color-outline-variant: #CAC4D0;
+    --md-sys-color-inverse-surface: #322F35;
+    --md-sys-color-inverse-on-surface: #F5EFF7;
+    --md-sys-color-inverse-primary: #D0BCFF;
     --md-sys-color-error: #B3261E;
     --md-sys-color-on-error: #FFFFFF;
+    --md-sys-color-error-container: #F9DEDC;
+    --md-sys-color-on-error-container: #410E0B;
+    --md-outlined-text-field-container-color: var(--md-sys-color-surface-container-highest);
+    --md-outlined-select-text-field-container-color: var(--md-sys-color-surface-container-highest);
     --hy-status-good: #2E7D32;
     --hy-status-bad:  #B3261E;
+    --hy-font-display: 'Fraunces', 'Times New Roman', serif;
+    --hy-font-body:    'Inter', system-ui, -apple-system, sans-serif;
+    --hy-ease-emph:    cubic-bezier(0.05, 0.7, 0.1, 1);
+    --hy-shadow-2:     0 1px 2px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.08);
+    --hy-shadow-3:     0 4px 8px rgba(0,0,0,0.12), 0 1px 3px rgba(0,0,0,0.10);
   }
   @media (prefers-color-scheme: dark) {
     :root {
+      /* M3 baseline dark scheme, Hyacinth purple seed. */
       --md-sys-color-primary: #D0BCFF;
       --md-sys-color-on-primary: #381E72;
       --md-sys-color-primary-container: #4F378B;
       --md-sys-color-on-primary-container: #EADDFF;
       --md-sys-color-secondary: #CCC2DC;
       --md-sys-color-on-secondary: #332D41;
+      --md-sys-color-secondary-container: #4A4458;
+      --md-sys-color-on-secondary-container: #E8DEF8;
+      --md-sys-color-tertiary: #EFB8C8;
+      --md-sys-color-on-tertiary: #492532;
+      --md-sys-color-background: #141218;
+      --md-sys-color-on-background: #E6E0E9;
       --md-sys-color-surface: #141218;
       --md-sys-color-on-surface: #E6E0E9;
       --md-sys-color-surface-variant: #49454F;
       --md-sys-color-on-surface-variant: #CAC4D0;
+      --md-sys-color-surface-dim: #141218;
+      --md-sys-color-surface-bright: #3B383E;
+      --md-sys-color-surface-container-lowest: #0F0D13;
+      --md-sys-color-surface-container-low: #1D1B20;
       --md-sys-color-surface-container: #211F26;
       --md-sys-color-surface-container-high: #2B2930;
       --md-sys-color-surface-container-highest: #36343B;
       --md-sys-color-outline: #938F99;
       --md-sys-color-outline-variant: #49454F;
+      --md-sys-color-inverse-surface: #E6E0E9;
+      --md-sys-color-inverse-on-surface: #322F35;
+      --md-sys-color-inverse-primary: #6750A4;
       --md-sys-color-error: #F2B8B5;
       --md-sys-color-on-error: #601410;
+      --md-sys-color-error-container: #8C1D18;
+      --md-sys-color-on-error-container: #F9DEDC;
       --hy-status-good: #81C784;
       --hy-status-bad:  #F2B8B5;
+      --hy-shadow-2:    0 1px 2px rgba(0,0,0,0.40), 0 2px 6px rgba(0,0,0,0.30);
+      --hy-shadow-3:    0 4px 10px rgba(0,0,0,0.50), 0 1px 3px rgba(0,0,0,0.40);
     }
   }
+  * { box-sizing: border-box; }
   html, body {
     margin: 0;
     padding: 0;
-    background: var(--md-sys-color-surface);
+    background: var(--md-sys-color-surface-container-lowest);
     color: var(--md-sys-color-on-surface);
-    font-family: Roboto, system-ui, -apple-system, sans-serif;
+    font-family: var(--hy-font-body);
+    font-weight: 400;
     min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
-  main {
-    max-width: 640px;
-    margin: 0 auto;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  header {
+
+  /* ----- Sticky status bar ----- */
+  .status-bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 8px 4px 0 4px;
+    gap: 16px;
+    padding: 10px 20px;
+    background: var(--md-sys-color-surface-container-high);
+    border-bottom: 1px solid var(--md-sys-color-outline-variant);
+    box-shadow: var(--hy-shadow-2);
+    backdrop-filter: saturate(180%) blur(6px);
   }
-  header .titles h1 {
-    margin: 0;
-    font-size: 22px;
-    font-weight: 500;
-    color: var(--md-sys-color-on-surface);
-  }
-  header .titles .sub {
-    font-size: 12px;
-    color: var(--md-sys-color-on-surface-variant);
-  }
-  .pill {
+  .status-bar .host {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    border-radius: 9999px;
-    background: var(--md-sys-color-surface-container-high);
-    color: var(--md-sys-color-on-surface);
+    gap: 8px;
     font-size: 12px;
-    border: 1px solid var(--md-sys-color-outline-variant);
+    font-weight: 500;
+    color: var(--md-sys-color-on-surface-variant);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
-  .pill .dot {
+  .status-bar .host .dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
     background: var(--hy-status-bad);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--hy-status-bad) 25%, transparent);
+    transition: background-color 200ms var(--hy-ease-emph),
+                box-shadow 200ms var(--hy-ease-emph);
   }
-  .pill.connected .dot { background: var(--hy-status-good); }
+  .status-bar.connected .host .dot {
+    background: var(--hy-status-good);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--hy-status-good) 25%, transparent);
+  }
+  .status-bar .now-showing {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--md-sys-color-on-surface-variant);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+  }
+  .status-bar .now-showing .label {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--md-sys-color-on-surface-variant);
+    opacity: 0.7;
+  }
+  .status-bar .now-showing .value {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: var(--md-sys-color-on-surface);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+    font-variant-numeric: tabular-nums;
+  }
+  .status-bar .spacer { flex: 0 0 auto; }
+
+  /* ----- Page header ----- */
+  .page-header {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 40px 24px 24px 24px;
+  }
+  .page-header h1 {
+    margin: 0;
+    font-family: var(--hy-font-display);
+    font-weight: 800;
+    font-size: clamp(36px, 6vw, 56px);
+    letter-spacing: -0.02em;
+    line-height: 1.02;
+    color: var(--md-sys-color-on-surface);
+    font-optical-sizing: auto;
+  }
+  .page-header .subtitle {
+    margin-top: 8px;
+    font-family: var(--hy-font-body);
+    font-weight: 300;
+    font-size: 14px;
+    color: var(--md-sys-color-on-surface-variant);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ----- Grid of sections ----- */
+  .grid {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 8px 24px 64px 24px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  @media (min-width: 720px) {
+    .grid {
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas:
+        "display packs"
+        "power   packs"
+        "live    packs";
+    }
+    .sect-display { grid-area: display; }
+    .sect-power   { grid-area: power; }
+    .sect-packs   { grid-area: packs; }
+    .sect-live    { grid-area: live; }
+  }
+  @media (min-width: 1100px) {
+    .grid {
+      grid-template-columns: 1fr 1fr 1.4fr;
+      grid-template-areas:
+        "display power packs"
+        "display live  packs";
+    }
+  }
+
+  /* ----- Section cards ----- */
   .card {
     background: var(--md-sys-color-surface-container);
-    border-radius: 16px;
-    padding: 16px;
+    border-radius: 20px;
+    padding: 24px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    border: 1px solid var(--md-sys-color-outline-variant);
+    gap: 18px;
+    min-width: 0;
+    opacity: 0;
+    transform: translateY(8px);
+    animation: hy-rise 400ms var(--hy-ease-emph) forwards;
+  }
+  .sect-display { background: var(--md-sys-color-surface-container-high); animation-delay: 0ms; }
+  .sect-power   { animation-delay: 60ms; }
+  .sect-packs   { animation-delay: 120ms; }
+  .sect-live    { animation-delay: 180ms; }
+  @keyframes hy-rise {
+    to { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .card { animation: none; opacity: 1; transform: none; }
+  }
+  .card .card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
   }
   .card h2 {
     margin: 0;
-    font-size: 16px;
+    font-family: var(--hy-font-display);
     font-weight: 500;
+    font-size: 22px;
+    letter-spacing: -0.01em;
     color: var(--md-sys-color-on-surface);
+    font-optical-sizing: auto;
   }
+  .card .card-hint {
+    font-size: 11px;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--md-sys-color-on-surface-variant);
+  }
+
+  /* ----- Form rows ----- */
   .row {
     display: flex;
     align-items: center;
     gap: 12px;
   }
   .row.between { justify-content: space-between; }
-  .grow { flex: 1; }
+  .col { display: flex; flex-direction: column; gap: 10px; }
+  .grow { flex: 1; min-width: 0; }
   md-outlined-text-field, md-outlined-select { width: 100%; }
   md-slider { flex: 1; }
   .actions {
@@ -687,101 +848,258 @@ const indexHTML = `<!DOCTYPE html>
     justify-content: flex-end;
     gap: 8px;
   }
+  .field-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--md-sys-color-on-surface-variant);
+    letter-spacing: 0.01em;
+  }
+  .muted {
+    font-size: 12px;
+    color: var(--md-sys-color-on-surface-variant);
+  }
+  .brightness-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .brightness-value {
+    font-family: var(--hy-font-body);
+    font-weight: 600;
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+    min-width: 64px;
+    text-align: right;
+    color: var(--md-sys-color-on-surface);
+    transition: color 200ms var(--hy-ease-emph);
+  }
+  .brightness-value.is-auto {
+    font-family: var(--hy-font-display);
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    color: var(--md-sys-color-primary);
+    text-transform: uppercase;
+  }
+
+  /* ----- Power section ----- */
+  .power-buttons {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 9999px;
+    background: var(--md-sys-color-secondary-container);
+    color: var(--md-sys-color-on-secondary-container);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    width: max-content;
+    max-width: 100%;
+  }
+
+  /* ----- Live updates ----- */
+  .conn-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .conn-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 9999px;
+    background: var(--md-sys-color-surface-container-highest);
+    color: var(--md-sys-color-on-surface);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .conn-pill .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--hy-status-bad);
+    transition: background-color 200ms var(--hy-ease-emph);
+  }
+  .conn-pill.connected .dot { background: var(--hy-status-good); }
+  .retry-hint {
+    font-size: 11px;
+    color: var(--md-sys-color-on-surface-variant);
+    font-variant-numeric: tabular-nums;
+  }
   .log {
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     font-size: 11px;
-    background: var(--md-sys-color-surface-container-highest);
-    border-radius: 8px;
-    padding: 8px;
-    max-height: 160px;
+    line-height: 1.5;
+    background: var(--md-sys-color-surface-container-lowest);
+    border: 1px solid var(--md-sys-color-outline-variant);
+    border-radius: 12px;
+    padding: 12px;
+    max-height: 180px;
     overflow: auto;
     color: var(--md-sys-color-on-surface-variant);
     white-space: pre-wrap;
     word-break: break-all;
   }
+  .log.empty {
+    font-family: var(--hy-font-body);
+    font-style: italic;
+    color: var(--md-sys-color-on-surface-variant);
+    opacity: 0.8;
+  }
+
+  /* ----- Packs ----- */
+  .upload-form {
+    display: grid;
+    grid-template-columns: 1fr 140px;
+    gap: 12px;
+  }
+  @media (max-width: 520px) {
+    .upload-form { grid-template-columns: 1fr; }
+  }
+  .file-input-wrap {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px dashed var(--md-sys-color-outline-variant);
+    border-radius: 12px;
+    background: var(--md-sys-color-surface-container-low);
+    color: var(--md-sys-color-on-surface-variant);
+    font-size: 13px;
+  }
+  .file-input-wrap input[type="file"] {
+    flex: 1;
+    min-width: 0;
+    color: inherit;
+    font: inherit;
+  }
+  md-list#pack-list {
+    --md-list-container-color: transparent;
+    background: transparent;
+    padding: 0;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--md-sys-color-outline-variant);
+  }
+  md-list#pack-list md-list-item {
+    --md-list-item-container-color: var(--md-sys-color-surface-container-low);
+  }
+  .pack-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 28px 16px;
+    border: 1px dashed var(--md-sys-color-outline-variant);
+    border-radius: 12px;
+    color: var(--md-sys-color-on-surface-variant);
+    background: var(--md-sys-color-surface-container-low);
+  }
+  .pack-empty md-icon {
+    font-size: 28px;
+    --md-icon-size: 28px;
+    opacity: 0.7;
+  }
+  .pack-empty .pack-empty-text {
+    font-size: 13px;
+    font-weight: 400;
+  }
+
+  /* ----- Toast ----- */
   .toast {
     position: fixed;
-    left: 50%;
+    right: 24px;
     bottom: 24px;
-    transform: translateX(-50%) translateY(40px);
-    background: var(--md-sys-color-surface-container-highest);
-    color: var(--md-sys-color-on-surface);
-    border: 1px solid var(--md-sys-color-outline-variant);
-    border-radius: 8px;
-    padding: 12px 16px;
+    min-width: 220px;
+    max-width: calc(100vw - 48px);
+    background: var(--md-sys-color-inverse-surface);
+    color: var(--md-sys-color-inverse-on-surface);
+    border-radius: 12px;
+    padding: 14px 18px;
     font-size: 14px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    font-weight: 500;
+    box-shadow: var(--hy-shadow-3);
     opacity: 0;
+    transform: translateY(24px);
     pointer-events: none;
-    transition: opacity 200ms ease, transform 200ms ease;
+    transition: opacity 300ms var(--hy-ease-emph),
+                transform 300ms var(--hy-ease-emph);
     z-index: 1000;
-    max-width: calc(100vw - 32px);
   }
   .toast.show {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateY(0);
   }
   .toast.error {
-    border-color: var(--md-sys-color-error);
-    color: var(--md-sys-color-error);
+    background: var(--md-sys-color-error-container);
+    color: var(--md-sys-color-on-error-container);
   }
-  .stale-banner {
+  @media (max-width: 520px) {
+    .toast {
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+    }
+  }
+
+  /* ----- Stale / reload inline affordance ----- */
+  .stale-reload {
     display: none;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    background: var(--md-sys-color-primary-container);
-    color: var(--md-sys-color-on-primary-container);
-    font-size: 13px;
   }
-  .stale-banner.show { display: flex; }
-  .placeholder {
-    font-size: 13px;
-    color: var(--md-sys-color-on-surface-variant);
-    font-style: italic;
-  }
+  .stale-reload.show { display: inline-flex; }
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <div class="titles">
-      <h1>Hyacinth Operator</h1>
-      <div class="sub" id="server-sub"></div>
-    </div>
-    <div class="row" style="gap:8px;">
-      <md-text-button id="token-btn" style="--md-text-button-label-text-size:11px;">Token</md-text-button>
-      <span class="pill" id="conn-pill"><span class="dot"></span><span id="conn-text">disconnected</span></span>
-    </div>
-  </header>
+<div id="status-bar" class="status-bar">
+  <div class="host">
+    <span class="dot" id="conn-dot"></span>
+    <span id="status-host">&mdash;</span>
+  </div>
+  <div class="now-showing">
+    <span class="label">Now showing</span>
+    <span class="value" id="status-content" title="">&mdash;</span>
+  </div>
+  <div class="spacer">
+    <md-icon-button id="token-icon-btn" aria-label="Set operator token" title="Set operator token">
+      <md-icon>key</md-icon>
+    </md-icon-button>
+  </div>
+</div>
 
-  <section class="card">
-    <h2>Current Config</h2>
-    <div id="stale-banner" class="stale-banner">
-      <span>Server changed config since you started editing.</span>
-      <md-text-button id="reload-btn">Reload</md-text-button>
+<header class="page-header">
+  <h1>Hyacinth Operator</h1>
+  <div class="subtitle" id="server-sub">&mdash;</div>
+</header>
+
+<main class="grid">
+  <section class="card sect-display" aria-labelledby="h-display">
+    <div class="card-head">
+      <h2 id="h-display">Display</h2>
+      <md-text-button id="reload-btn" class="stale-reload">Reload from server</md-text-button>
     </div>
     <md-outlined-text-field id="content-field" label="Content URL" type="url"></md-outlined-text-field>
-    <div>
+    <div class="col">
       <div class="row between">
-        <label for="auto-switch" style="font-size:14px;">Brightness</label>
-        <div class="row">
-          <span style="font-size:12px;color:var(--md-sys-color-on-surface-variant);">Auto</span>
+        <span class="field-label">Brightness</span>
+        <div class="row" style="gap:8px;">
+          <span class="muted">Auto</span>
           <md-switch id="auto-switch"></md-switch>
         </div>
       </div>
-      <div class="row" style="margin-top:8px;">
+      <div class="brightness-row">
         <md-slider id="brightness-slider" min="0" max="100" step="1" labeled value="50"></md-slider>
+        <span class="brightness-value" id="brightness-value">50</span>
       </div>
-    </div>
-    <div>
-      <div class="row" style="gap: 8px;">
-        <md-filled-button id="screen-off-btn">Screen off</md-filled-button>
-        <md-filled-button id="screen-on-btn">Screen on</md-filled-button>
-      </div>
-      <p class="hint" style="font-size:12px;color:var(--md-sys-color-on-surface-variant);margin:4px 0 0 0;">Imperative — fires once and forgets. State isn't persisted.</p>
     </div>
     <md-outlined-select id="timeout-select" label="Screen Timeout">
       <md-select-option value="always-on"><div slot="headline">Always on</div></md-select-option>
@@ -796,61 +1114,93 @@ const indexHTML = `<!DOCTYPE html>
     </div>
   </section>
 
-  <section class="card">
-    <h2>Live Updates</h2>
-    <div class="row between">
-      <span style="font-size:13px;color:var(--md-sys-color-on-surface-variant);" id="ws-status">disconnected</span>
-      <span style="font-size:11px;color:var(--md-sys-color-on-surface-variant);" id="ws-retry"></span>
+  <section class="card sect-power" aria-labelledby="h-power">
+    <div class="card-head">
+      <h2 id="h-power">Power</h2>
+      <span class="chip">Imperative &mdash; fires once and forgets</span>
     </div>
-    <div class="log" id="log">(no events yet)</div>
+    <div class="power-buttons">
+      <md-filled-button id="screen-on-btn">
+        <md-icon slot="icon">light_mode</md-icon>
+        Screen on
+      </md-filled-button>
+      <md-outlined-button id="screen-off-btn">
+        <md-icon slot="icon">dark_mode</md-icon>
+        Screen off
+      </md-outlined-button>
+    </div>
+    <p class="muted" style="margin:0;">State isn&rsquo;t persisted &mdash; the tablet obeys immediately but the request isn&rsquo;t replayed on reconnect.</p>
   </section>
 
-  <section class="card">
-    <h2>Resource Packs</h2>
-    <div class="row" style="flex-wrap:wrap;gap:8px;">
-      <md-outlined-text-field id="pack-id" label="Pack ID (slug)" style="flex:1;min-width:140px;"></md-outlined-text-field>
-      <md-outlined-select id="pack-type" label="Type" style="flex:0 0 140px;">
+  <section class="card sect-live" aria-labelledby="h-live">
+    <div class="card-head">
+      <h2 id="h-live">Live updates</h2>
+    </div>
+    <div class="conn-row">
+      <span class="conn-pill" id="conn-pill"><span class="dot"></span><span id="conn-text">disconnected</span></span>
+      <span class="retry-hint" id="ws-retry"></span>
+    </div>
+    <div class="log empty" id="log">Waiting for the first config push&hellip;</div>
+  </section>
+
+  <section class="card sect-packs" aria-labelledby="h-packs">
+    <div class="card-head">
+      <h2 id="h-packs">Packs</h2>
+    </div>
+    <div class="upload-form">
+      <md-outlined-text-field id="pack-id" label="Pack ID (slug)"></md-outlined-text-field>
+      <md-outlined-select id="pack-type" label="Type">
         <md-select-option value="png" selected><div slot="headline">png</div></md-select-option>
         <md-select-option value="jpg"><div slot="headline">jpg</div></md-select-option>
         <md-select-option value="webp"><div slot="headline">webp</div></md-select-option>
         <md-select-option value="gif"><div slot="headline">gif</div></md-select-option>
         <md-select-option value="zip"><div slot="headline">zip</div></md-select-option>
       </md-outlined-select>
+      <label class="file-input-wrap">
+        <md-icon>upload_file</md-icon>
+        <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif" />
+      </label>
     </div>
-    <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif" />
     <div class="actions">
-      <md-filled-button id="pack-upload-btn">Upload</md-filled-button>
+      <md-filled-button id="pack-upload-btn">
+        <md-icon slot="icon">cloud_upload</md-icon>
+        Upload
+      </md-filled-button>
     </div>
-    <md-list id="pack-list">
-      <md-list-item disabled>
-        <div slot="headline">No packs yet</div>
-        <div slot="supporting-text">Upload an image above to get started.</div>
-      </md-list-item>
-    </md-list>
+    <md-list id="pack-list"></md-list>
+    <div id="pack-empty" class="pack-empty" hidden>
+      <md-icon>inventory_2</md-icon>
+      <div class="pack-empty-text">No packs uploaded yet</div>
+    </div>
   </section>
 </main>
 
-<div id="toast" class="toast"></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script type="module">
   // ----- DOM handles -----
   const $ = (id) => document.getElementById(id);
+  const statusBar    = $('status-bar');
+  const statusHost   = $('status-host');
+  const statusContent= $('status-content');
   const contentField = $('content-field');
   const autoSwitch   = $('auto-switch');
   const slider       = $('brightness-slider');
+  const brightnessValue = $('brightness-value');
   const timeoutSel   = $('timeout-select');
   const saveBtn      = $('save-btn');
   const screenOffBtn = $('screen-off-btn');
   const screenOnBtn  = $('screen-on-btn');
   const connPill     = $('conn-pill');
   const connText     = $('conn-text');
-  const wsStatus     = $('ws-status');
   const wsRetry      = $('ws-retry');
   const logEl        = $('log');
   const toastEl      = $('toast');
-  const staleBanner  = $('stale-banner');
   const reloadBtn    = $('reload-btn');
+  const tokenBtn     = $('token-icon-btn');
 
+  // Host text appears in both the sticky bar and the header subtitle.
+  statusHost.textContent = location.host;
   $('server-sub').textContent = location.host;
 
   // ----- Operator auth token (M8) -----
@@ -869,7 +1219,7 @@ const indexHTML = `<!DOCTYPE html>
     if (t) h['Authorization'] = 'Bearer ' + t;
     return h;
   }
-  $('token-btn').addEventListener('click', () => {
+  tokenBtn.addEventListener('click', () => {
     const cur = getToken();
     const next = window.prompt(
       'Operator token (leave blank to clear):',
@@ -888,8 +1238,25 @@ const indexHTML = `<!DOCTYPE html>
   const BACKOFF_CAP = 10000;
 
   // ----- Form helpers -----
+  function updateBrightnessValueLabel() {
+    if (autoSwitch.selected) {
+      brightnessValue.textContent = 'Auto';
+      brightnessValue.classList.add('is-auto');
+    } else {
+      brightnessValue.textContent = String(slider.value);
+      brightnessValue.classList.remove('is-auto');
+    }
+  }
+
+  function updateStatusContent(url) {
+    const v = url || '';
+    statusContent.textContent = v || '\u2014';
+    statusContent.title = v;
+  }
+
   function applyConfigToForm(cfg) {
     contentField.value = cfg.content || '';
+    updateStatusContent(cfg.content);
     const b = cfg.brightness;
     if (b === 'auto' || b === '"auto"') {
       autoSwitch.selected = true;
@@ -904,7 +1271,8 @@ const indexHTML = `<!DOCTYPE html>
       ? cfg.screenTimeout
       : 'always-on';
     dirty = false;
-    staleBanner.classList.remove('show');
+    reloadBtn.classList.remove('show');
+    updateBrightnessValueLabel();
   }
 
   function buildPayload() {
@@ -917,11 +1285,18 @@ const indexHTML = `<!DOCTYPE html>
   }
 
   function markDirty() { dirty = true; }
-  contentField.addEventListener('input', markDirty);
-  slider.addEventListener('input', markDirty);
+  contentField.addEventListener('input', () => {
+    markDirty();
+    updateStatusContent(contentField.value);
+  });
+  slider.addEventListener('input', () => {
+    markDirty();
+    updateBrightnessValueLabel();
+  });
   autoSwitch.addEventListener('change', () => {
     slider.disabled = autoSwitch.selected;
     markDirty();
+    updateBrightnessValueLabel();
   });
   timeoutSel.addEventListener('change', markDirty);
 
@@ -949,7 +1324,7 @@ const indexHTML = `<!DOCTYPE html>
     toastEl.classList.toggle('error', !!isError);
     toastEl.classList.add('show');
     if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 3000);
   }
 
   // ----- Save -----
@@ -991,20 +1366,21 @@ const indexHTML = `<!DOCTYPE html>
   function setConn(connected, retrying) {
     if (connected) {
       connPill.classList.add('connected');
+      statusBar.classList.add('connected');
       connText.textContent = 'connected';
-      wsStatus.textContent = 'connected';
       wsRetry.textContent = '';
     } else {
       connPill.classList.remove('connected');
+      statusBar.classList.remove('connected');
       connText.textContent = 'disconnected';
-      wsStatus.textContent = 'disconnected';
-      wsRetry.textContent = retrying ? '(retrying...)' : '';
+      wsRetry.textContent = retrying ? '(retrying\u2026)' : '';
     }
   }
 
   function pushLog(env) {
     recentEvents.unshift(env);
     if (recentEvents.length > 5) recentEvents.length = 5;
+    logEl.classList.remove('empty');
     logEl.textContent = recentEvents
       .map((e) => JSON.stringify(e).slice(0, 240))
       .join('\n');
@@ -1037,7 +1413,9 @@ const indexHTML = `<!DOCTYPE html>
         if (!dirty) {
           applyConfigToForm(env.config);
         } else {
-          staleBanner.classList.add('show');
+          reloadBtn.classList.add('show');
+          // Don't clobber the user's edits, but keep the sticky bar honest.
+          updateStatusContent(env.config.content);
         }
       }
     });
@@ -1060,6 +1438,7 @@ const indexHTML = `<!DOCTYPE html>
   const packFileInput = $('pack-file');
   const packUploadBtn = $('pack-upload-btn');
   const packListEl    = $('pack-list');
+  const packEmptyEl   = $('pack-empty');
 
   function humanSize(n) {
     if (n < 1024) return n + ' B';
@@ -1074,6 +1453,25 @@ const indexHTML = `<!DOCTYPE html>
     return 'hyacinth://pack/' + p.id + '/' + path;
   }
 
+  function setContentToPackUrl(p) {
+    contentField.value = packSchemeUrl(p);
+    markDirty();
+    updateStatusContent(contentField.value);
+    toast('Set content URL \u2014 click Save to push.');
+  }
+
+  async function deletePack(id) {
+    if (!confirm('Delete pack "' + id + '"?')) return;
+    try {
+      const r = await fetch('/packs/' + encodeURIComponent(id), {method: 'DELETE', headers: authHeaders()});
+      if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
+      toast('Deleted ' + id);
+      loadPackList();
+    } catch (e) {
+      toast('Delete failed: ' + e.message, true);
+    }
+  }
+
   async function loadPackList() {
     try {
       const r = await fetch('/packs');
@@ -1085,51 +1483,51 @@ const indexHTML = `<!DOCTYPE html>
     }
   }
 
+  function makeIconButton(iconName, label, onClick) {
+    const btn = document.createElement('md-icon-button');
+    btn.setAttribute('aria-label', label);
+    btn.setAttribute('title', label);
+    const icon = document.createElement('md-icon');
+    icon.textContent = iconName;
+    btn.appendChild(icon);
+    btn.addEventListener('click', onClick);
+    return btn;
+  }
+
   function renderPackList(packs) {
     packListEl.innerHTML = '';
     if (packs.length === 0) {
-      const item = document.createElement('md-list-item');
-      item.setAttribute('disabled', '');
-      const h = document.createElement('div'); h.setAttribute('slot', 'headline'); h.textContent = 'No packs yet';
-      const s = document.createElement('div'); s.setAttribute('slot', 'supporting-text'); s.textContent = 'Upload an image above to get started.';
-      item.appendChild(h); item.appendChild(s);
-      packListEl.appendChild(item);
+      packListEl.hidden = true;
+      packEmptyEl.hidden = false;
       return;
     }
+    packListEl.hidden = false;
+    packEmptyEl.hidden = true;
     for (const p of packs) {
       const item = document.createElement('md-list-item');
+
+      const leading = document.createElement('div');
+      leading.setAttribute('slot', 'start');
+      const leadingIcon = document.createElement('md-icon');
+      leadingIcon.textContent = p.type === 'zip' ? 'folder_zip' : 'image';
+      leading.appendChild(leadingIcon);
+
       const h = document.createElement('div');
       h.setAttribute('slot', 'headline');
-      h.textContent = p.id + '  v' + p.version + '  (' + p.type + ')';
+      h.textContent = p.id;
+
       const s = document.createElement('div');
       s.setAttribute('slot', 'supporting-text');
-      s.textContent = humanSize(p.size) + '  ·  ' + p.createdAt;
+      s.textContent = 'v' + p.version + '  \u00b7  ' + humanSize(p.size);
+
       const trailing = document.createElement('div');
       trailing.setAttribute('slot', 'end');
       trailing.style.display = 'flex';
       trailing.style.gap = '4px';
-      const useBtn = document.createElement('md-text-button');
-      useBtn.textContent = 'Use as content';
-      useBtn.addEventListener('click', () => {
-        contentField.value = packSchemeUrl(p);
-        markDirty();
-        toast('Set content URL — click Save to push.');
-      });
-      const delBtn = document.createElement('md-text-button');
-      delBtn.textContent = 'Delete';
-      delBtn.addEventListener('click', async () => {
-        if (!confirm('Delete pack "' + p.id + '"?')) return;
-        try {
-          const r = await fetch('/packs/' + encodeURIComponent(p.id), {method: 'DELETE', headers: authHeaders()});
-          if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
-          toast('Deleted ' + p.id);
-          loadPackList();
-        } catch (e) {
-          toast('Delete failed: ' + e.message, true);
-        }
-      });
-      trailing.appendChild(useBtn);
-      trailing.appendChild(delBtn);
+      trailing.appendChild(makeIconButton('play_arrow', 'Use as content', () => setContentToPackUrl(p)));
+      trailing.appendChild(makeIconButton('delete', 'Delete pack', () => deletePack(p.id)));
+
+      item.appendChild(leading);
       item.appendChild(h);
       item.appendChild(s);
       item.appendChild(trailing);
