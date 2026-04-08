@@ -2,14 +2,17 @@ package io.hyacinth.hyacinth
 
 import android.app.KeyguardManager
 import android.app.admin.DevicePolicyManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.BinaryMessenger
@@ -57,6 +60,45 @@ class MainActivity : FlutterActivity() {
         configureRootChannel(messenger)
         configureScreenPowerChannel(messenger)
         configureCpuGovernorChannel(messenger)
+        configureBatteryChannel(messenger)
+    }
+
+    // M13 — one-way native→Dart channel that forwards
+    // ACTION_POWER_CONNECTED / ACTION_POWER_DISCONNECTED system broadcasts
+    // as `charging_changed` method calls. The Dart side (`BatteryWatcher`)
+    // pipes these into `AppState._handleScreenCommand(!connected)` to
+    // reuse the M9.1 screen-power codepath — plugged in ⇒ screen off,
+    // unplugged ⇒ screen on. The receiver lives for the activity
+    // lifetime; the OS cleans up on process death so no explicit
+    // unregister is needed. These are protected system broadcasts so
+    // `RECEIVER_NOT_EXPORTED` is correct on Android 14+.
+    private fun configureBatteryChannel(messenger: BinaryMessenger) {
+        val channel = MethodChannel(messenger, "io.hyacinth/battery")
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val connected = when (intent.action) {
+                    Intent.ACTION_POWER_CONNECTED -> true
+                    Intent.ACTION_POWER_DISCONNECTED -> false
+                    else -> return
+                }
+                runOnUiThread {
+                    channel.invokeMethod(
+                        "charging_changed",
+                        mapOf("connected" to connected),
+                    )
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_POWER_CONNECTED)
+            addAction(Intent.ACTION_POWER_DISCONNECTED)
+        }
+        ContextCompat.registerReceiver(
+            this,
+            receiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
 
     // M8 — foreground service control. Dart calls start() in

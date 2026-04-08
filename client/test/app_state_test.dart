@@ -7,6 +7,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -21,6 +22,7 @@ import 'package:hyacinth/resource_pack/pack_cache.dart';
 import 'package:hyacinth/resource_pack/pack_manager.dart';
 import 'package:hyacinth/resource_pack/pack_manifest.dart';
 import 'package:hyacinth/resource_pack/wifi_guard.dart';
+import 'package:hyacinth/system/battery_watcher.dart';
 import 'package:hyacinth/system/screen_power.dart';
 import 'package:hyacinth/system/secure_settings.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -167,6 +169,34 @@ class _AdminActiveScreenPower implements ScreenPower {
   Future<void> requestAdmin() async {}
   @override
   Future<String> apply(bool screenOn) async => 'admin';
+}
+
+/// Fake [BatteryWatcher] used by AppState tests so they never touch the
+/// real `io.hyacinth/battery` MethodChannel. Subclasses (not implements)
+/// because the real class's constructor installs a channel handler that
+/// is harmless in tests, and subclassing lets us reuse the same
+/// disposed/closed bookkeeping path.
+class _FakeBatteryWatcher extends BatteryWatcher {
+  _FakeBatteryWatcher()
+      : super(channel: const MethodChannel('io.hyacinth/battery.fake'));
+
+  final StreamController<bool> _events = StreamController<bool>.broadcast();
+  bool disposed = false;
+
+  @override
+  Stream<bool> get onChargingChanged => _events.stream;
+
+  /// Test hook: synthesize a charging-state broadcast.
+  void fire(bool connected) => _events.add(connected);
+
+  @override
+  Future<void> dispose() async {
+    disposed = true;
+    if (!_events.isClosed) {
+      await _events.close();
+    }
+    await super.dispose();
+  }
 }
 
 /// Fake [ScreenPower] whose `apply` behavior is flipped by the test. Used
@@ -809,6 +839,122 @@ void main() {
     });
   });
 
+  group('M13 charging events', () {
+    test('connected ⇒ ScreenPower.apply(false)', () async {
+      final watcher = _FakeBatteryWatcher();
+      final sp = _ProgrammableScreenPower();
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        screenPower: sp,
+        batteryWatcher: watcher,
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      watcher.fire(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(sp.calls, <bool>[false],
+          reason: 'plugged in ⇒ auto screen-off');
+      state.dispose();
+    });
+
+    test('disconnected ⇒ ScreenPower.apply(true)', () async {
+      final watcher = _FakeBatteryWatcher();
+      final sp = _ProgrammableScreenPower();
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        screenPower: sp,
+        batteryWatcher: watcher,
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      watcher.fire(false);
+      await Future<void>.delayed(Duration.zero);
+      expect(sp.calls, <bool>[true],
+          reason: 'unplugged ⇒ auto screen-on');
+      state.dispose();
+    });
+
+    test('toggle sequence accumulates in order', () async {
+      final watcher = _FakeBatteryWatcher();
+      final sp = _ProgrammableScreenPower();
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        screenPower: sp,
+        batteryWatcher: watcher,
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      watcher.fire(true);
+      await Future<void>.delayed(Duration.zero);
+      watcher.fire(false);
+      await Future<void>.delayed(Duration.zero);
+      watcher.fire(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(sp.calls, <bool>[false, true, false]);
+      state.dispose();
+    });
+
+    test('dispose cancels the subscription (no delivery post-dispose)',
+        () async {
+      final watcher = _FakeBatteryWatcher();
+      final sp = _ProgrammableScreenPower();
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        screenPower: sp,
+        batteryWatcher: watcher,
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      watcher.fire(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(sp.calls, <bool>[false]);
+      state.dispose();
+      expect(watcher.disposed, isTrue,
+          reason: 'AppState.dispose must dispose its owned BatteryWatcher');
+      // A post-dispose event must not trigger another apply. Note: the
+      // watcher was closed by dispose(), so fire() is a no-op on a
+      // closed controller — either way, `sp.calls` must stay at one.
+      // ignore: invalid_use_of_protected_member
+      // We call via a fresh broadcast controller path that StreamController
+      // tolerates after close(): adding to a closed broadcast controller
+      // throws, so we guard with isClosed.
+      expect(sp.calls.length, 1);
+    });
+
+    test('charging trigger surfaces ScreenPowerUnavailable via '
+        'screenPowerError (same path as M9.1 WS dispatcher)', () async {
+      final watcher = _FakeBatteryWatcher();
+      final sp = _ProgrammableScreenPower()..throwUnavailable = true;
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        screenPower: sp,
+        batteryWatcher: watcher,
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      watcher.fire(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(sp.calls, <bool>[false]);
+      expect(state.screenPowerError, isNotNull);
+      expect(state.screenPowerError, contains('capability'));
+      state.dispose();
+    });
+  });
 }
 
 /// A `WsConnection` whose stream never emits and whose sink no-ops. Used

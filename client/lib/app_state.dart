@@ -11,6 +11,7 @@ import 'resource_pack/pack_cache.dart';
 import 'resource_pack/pack_manager.dart';
 import 'resource_pack/pack_manifest.dart';
 import 'resource_pack/wifi_guard.dart';
+import 'system/battery_watcher.dart';
 import 'system/screen_power.dart';
 
 /// Signature for a function that builds a [WsClient] given a base URL and
@@ -77,6 +78,7 @@ class AppState extends ChangeNotifier {
     PackCache? packCache,
     PackManagerFactory? packManagerFactory,
     ScreenPower? screenPower,
+    BatteryWatcher? batteryWatcher,
     Duration fallbackRetryInterval = const Duration(seconds: 10),
   })  : _store = store ?? ConfigStore(),
         _client = client ?? ConfigClient(),
@@ -85,6 +87,7 @@ class AppState extends ChangeNotifier {
         _packCache = packCache ?? PackCache(),
         _packManagerFactory = packManagerFactory,
         _screenPower = screenPower ?? ScreenPower(),
+        _batteryWatcher = batteryWatcher ?? BatteryWatcher(),
         _fallbackRetryInterval = fallbackRetryInterval;
 
   final ConfigStore _store;
@@ -94,9 +97,11 @@ class AppState extends ChangeNotifier {
   final PackCache _packCache;
   final PackManagerFactory? _packManagerFactory;
   final ScreenPower _screenPower;
+  final BatteryWatcher _batteryWatcher;
   final Duration _fallbackRetryInterval;
   WsClient? _wsClient;
   PackManager? _packManager;
+  StreamSubscription<bool>? _chargingSub;
 
   PackCache get packCache => _packCache;
 
@@ -122,6 +127,15 @@ class AppState extends ChangeNotifier {
   /// wizard or the connect flow.
   Future<void> start() async {
     _setPhase(AppPhase.booting);
+    // M13: subscribe to charging-state transitions so plugging in the
+    // tablet auto-turns the screen off and unplugging turns it back on.
+    // Routes through `_handleScreenCommand` — the same entry point the
+    // M9.1 WS dispatcher uses — so the tier orchestration, error
+    // surfacing, and notification path are all shared.
+    _chargingSub ??= _batteryWatcher.onChargingChanged.listen((connected) {
+      // ignore: discard_returned_future
+      _handleScreenCommand(!connected);
+    });
     final complete = await _store.isOnboardingComplete();
     final serverUrl = await _store.loadServerUrl();
     if (!complete || serverUrl == null || serverUrl.trim().isEmpty) {
@@ -406,6 +420,11 @@ class AppState extends ChangeNotifier {
     _disposed = true;
     _cancelFallbackTimer();
     _closeWsClient();
+    // ignore: discard_returned_future
+    _chargingSub?.cancel();
+    _chargingSub = null;
+    // ignore: discard_returned_future
+    _batteryWatcher.dispose();
     super.dispose();
   }
 }
