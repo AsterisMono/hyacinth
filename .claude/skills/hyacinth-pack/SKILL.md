@@ -89,67 +89,44 @@ After the scaffold lands, print exactly:
 ```
 ✦ Pack scaffolded at packs/<id>/
 
-Next steps:
-  just pack-dev <id>      # live preview at http://localhost:5173
-  just pack-upload <id>   # build, zip, and POST to the running Hyacinth server
+Set these once per shell (or in your shell rc):
+  export HYACINTH_SERVER=http://<kiosk-ip>:8080
+  export HYACINTH_TOKEN=<operator-token>
 
-The server respects HYACINTH_SERVER (default http://localhost:8080) and
-HYACINTH_TOKEN (default empty) from the environment.
+Iterate on the actual tablet with HMR (recommended):
+  just pack-dev <id>      # pushes vite --host URL to the kiosk; HMR on save
+                          # Ctrl-C to stop and restore the previous content
+                          # falls back to http://localhost:5173 if HYACINTH_SERVER
+                          # is unset or unreachable
+
+When the pack is ready, publish a release-ready zip to the kiosk:
+  just pack-upload <id>   # build, lint, zip, and POST
+
+Prerequisite for live on-device dev: the tablet must be running a debug-build
+APK (`just install`). The release NSC blocks cleartext HTTP to LAN IPs; the
+debug NSC overlay permits it. A release-build tablet will silently refuse to
+load the dev URL and the pack will appear blank.
 ```
 
 Don't run any of those commands automatically — `vite dev` blocks the terminal, and `pack-upload` will fail with a confusing curl error if the user hasn't started the server yet. Let them drive the next step.
 
 ## Justfile recipes
 
-Append this block to the project's top-level `Justfile` if `pack-dev` doesn't already exist:
+The pack lifecycle recipes (`pack-dev`, `pack-build`, `pack-lint`, `pack-upload`, `_pack-vite-build`) live in the project's top-level `Justfile` and are checked into the repo. They are considered the canonical, evolving definition — this skill does **not** duplicate the source here, because every milestone that touches pack tooling (M5 added the basic recipes, M15 split `pack-build` and added `pack-lint`, M15.1 rewrote `pack-dev` as a bash script with on-device kiosk push) would otherwise drift out of sync.
 
-```just
-# ----- Hyacinth content packs (see .claude/skills/hyacinth-pack/SKILL.md)
-# Requires pnpm — install via `npm install -g pnpm` or `corepack enable`
-# (recommended: corepack, ships with Node 16.13+).
-# Lazy install: node_modules is created on first dev/build, reused thereafter.
-# Override server + auth via env: HYACINTH_SERVER, HYACINTH_TOKEN.
+If the recipes are missing from a fresh checkout (which should not happen — they're tracked in git), copy them from the live `Justfile` rather than from any embedded block in this skill.
 
-pack-dev id:
-    @cd packs/{{id}} && [ -d node_modules ] || pnpm install --silent
-    cd packs/{{id}} && pnpm exec vite
-
-pack-build id: (_pack-vite-build id) (pack-lint id)
-
-_pack-vite-build id:
-    @cd packs/{{id}} && [ -d node_modules ] || pnpm install --silent
-    cd packs/{{id}} && pnpm exec vite build
-
-# M15 offline-pure invariant: built dist/ must contain zero https:// refs.
-# `http://www.w3.org/...` is an XML/SVG namespace URI, not a network fetch,
-# so it's whitelisted. Everything else (CDN scripts, Google Fonts links the
-# vite-plugin-webfont-dl plugin missed, hotlinked images, fetch() calls) is
-# a hard fail.
-pack-lint id:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    matches=$(grep -rEn "https?://[^\"' )]+" packs/{{id}}/dist 2>/dev/null | grep -v "www\.w3\.org" || true)
-    if [ -n "$matches" ]; then
-        echo "✗ pack {{id}} has network references in dist/:"
-        echo "$matches"
-        exit 1
-    fi
-    echo "✓ pack {{id}} is offline-pure (no https:// references in dist)"
-
-pack-upload id: (pack-build id)
-    cd packs/{{id}}/dist && zip -qr ../pack.zip .
-    curl -fsS -X POST \
-        -H "Authorization: Bearer ${HYACINTH_TOKEN:-}" \
-        -F "id={{id}}" -F "type=zip" -F "file=@packs/{{id}}/pack.zip" \
-        "${HYACINTH_SERVER:-http://localhost:8080}/packs"
-    @echo ""
-    @echo "✦ Uploaded {{id}} to ${HYACINTH_SERVER:-http://localhost:8080}"
-    @echo "  Set the operator UI's content URL to: hyacinth://pack/{{id}}/index.html"
-```
+The recipes use `pnpm`, not `npm` (install via `corepack enable && corepack prepare pnpm@latest --activate`, or `npm install -g pnpm`), and respect two env vars in this project: `HYACINTH_SERVER` (kiosk URL, default `http://localhost:8080`) and `HYACINTH_TOKEN` (operator bearer token, default empty). Both `pack-dev` (M15.1 on-device live dev) and `pack-upload` use them; both fall back gracefully when they're unset.
 
 ## After the user has a pack
 
-Once the scaffold is in place, the user iterates with `just pack-dev <id>` (browser preview at http://localhost:5173, Vite hot-reloads on save) and `just pack-upload <id>` (publishes to the server, which broadcasts to the tablet via WS).
+Once the scaffold is in place, the **primary iteration loop** is `just pack-dev <id>` against the actual tablet. The recipe auto-detects the dev machine's LAN IP relative to `HYACINTH_SERVER`, pushes `http://<dev-ip>:5173/` onto the kiosk's `/config.content` so the tablet's WebView loads the running Vite dev server directly, and Vite HMR patches modules in place on every source save — edit a CSS file, blink, the change is on the tablet. Ctrl-C the recipe to stop and restore the previous kiosk content (an EXIT trap handles this on normal exit, errors, and Ctrl-C alike).
+
+**Prerequisite for the on-device path**: the tablet must be running a *debug-build APK* (`just install`, NOT `just apk-install` which is release). The release NSC at `client/android/app/src/main/res/xml/network_security_config.xml` was locked down by M8 Track C and only permits cleartext HTTP for `localhost` + `10.0.2.2`. The debug NSC overlay at `client/android/app/src/debug/res/xml/network_security_config.xml` (added in M15.1) permits cleartext globally for LAN dev. Android's build-type resource merging picks the right NSC per variant; no manifest change needed. A release-build tablet will silently refuse to load the Vite dev URL and the pack will appear blank — flash a debug APK once and you're set.
+
+**Fallback path** for when you don't have the tablet handy: if `HYACINTH_SERVER` is unset, unreachable, or the LAN-IP detection fails, `pack-dev` prints a warning and falls through to plain `pnpm exec vite` on `http://localhost:5173/` for desktop-browser preview. No env-var juggling needed — same recipe, automatic fallback.
+
+When the pack is ready for actual deployment, `just pack-upload <id>` builds, lints (M15 offline-pure check), zips, and POSTs the dist to the kiosk; the WS broadcast switches the tablet to the released pack within ~1s.
 
 The first upload also wires up the operator UI: open `http://<server>:8080/`, find the new pack in the Packs list, click the play_arrow icon — that publishes the pack's URL as the active `content` and the tablet switches to it within ~1s.
 

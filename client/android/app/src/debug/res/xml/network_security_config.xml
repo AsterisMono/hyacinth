@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  M15.1 — DEBUG BUILD ONLY.
+
+  This file exists so `just apk-debug` / `just install` can produce a debug
+  APK that reaches the Vite dev server. `just pack-dev <id>` pushes
+  http://<dev-ip>:5173/ onto the kiosk's /config when iterating on a pack
+  (see plan.md M15.1 and .claude/skills/hyacinth-pack/SKILL.md), and the
+  tablet's WebView needs to load that cleartext LAN URL.
+
+  Android permits per-build-type resource overlays: this file REPLACES
+  `main/res/xml/network_security_config.xml` at build time when building
+  a debug variant. Release builds never see it — Android's resource
+  merger only consults the active variant's source set + main/.
+
+  The release NSC at `main/res/xml/network_security_config.xml` is the
+  one that ships to actual Ita-Bag tablets and remains locked down per
+  M8 Track C: cleartext only for localhost + 10.0.2.2, base-config
+  cleartextTrafficPermitted="false". Do NOT copy this relaxed config
+  into main/ — it would regress M8's network hardening.
+
+  `just apk` (release)              → main/ NSC      → locked down.
+  `just apk-debug` / `just install` → this file      → cleartext OK on LAN.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>
