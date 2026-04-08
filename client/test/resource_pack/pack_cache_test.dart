@@ -128,6 +128,87 @@ void main() {
     expect(isSafeRelPath('null\x00byte'), isFalse);
   });
 
+  group('gcMissingPacks + wipeAll', () {
+    Future<void> seedPack(String id) async {
+      final f = await cache.stagingFile(id, 1, 'image.png');
+      await f.writeAsBytes(<int>[1, 2, 3]);
+      await cache.swapCurrent(id, 1);
+    }
+
+    test('gcMissingPacks deletes packs missing from liveIds', () async {
+      await seedPack('a');
+      await seedPack('b');
+      await seedPack('c');
+
+      final deleted = await cache.gcMissingPacks(<String>{'a', 'c'});
+      expect(deleted, contains('b'));
+      expect(deleted, hasLength(1));
+
+      final root = await cache.root();
+      final survivors = <String>{};
+      await for (final e in root.list()) {
+        if (e is Directory) {
+          survivors.add(e.uri.pathSegments
+              .where((s) => s.isNotEmpty)
+              .last);
+        }
+      }
+      expect(survivors, equals(<String>{'a', 'c'}));
+      expect(await cache.currentVersion('b'), isNull);
+      expect(await cache.currentVersion('a'), 1);
+      expect(await cache.currentVersion('c'), 1);
+    });
+
+    test('gcMissingPacks with preserveId keeps that pack even if absent',
+        () async {
+      await seedPack('a');
+      await seedPack('b');
+
+      final deleted =
+          await cache.gcMissingPacks(<String>{}, preserveId: 'a');
+      expect(deleted, equals(<String>['b']));
+
+      expect(await cache.currentVersion('a'), 1,
+          reason: 'preserveId must survive empty liveIds');
+      expect(await cache.currentVersion('b'), isNull);
+    });
+
+    test('gcMissingPacks on an empty cache root is a no-op', () async {
+      final deleted = await cache.gcMissingPacks(<String>{'anything'});
+      expect(deleted, isEmpty);
+    });
+
+    test('wipeAll removes everything and recreates the root', () async {
+      await seedPack('a');
+      await seedPack('b');
+
+      await cache.wipeAll();
+
+      final root = await cache.root();
+      expect(await root.exists(), isTrue,
+          reason: 'wipeAll must recreate the root empty');
+      final remaining = await root.list().toList();
+      expect(remaining, isEmpty);
+      expect(await cache.currentVersion('a'), isNull);
+      expect(await cache.currentVersion('b'), isNull);
+    });
+
+    test('wipeAll on a missing root is a no-op and creates the root',
+        () async {
+      // Start by nuking the root behind the cache's back.
+      final root = await cache.root();
+      await root.delete(recursive: true);
+      expect(await root.exists(), isFalse);
+
+      await cache.wipeAll();
+
+      final rebuilt = await cache.root();
+      expect(await rebuilt.exists(), isTrue);
+      final entries = await rebuilt.list().toList();
+      expect(entries, isEmpty);
+    });
+  });
+
   test('gc retains the active version even if outside the keep window',
       () async {
     for (int v = 1; v <= 4; v++) {

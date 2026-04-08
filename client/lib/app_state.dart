@@ -219,6 +219,20 @@ class AppState extends ChangeNotifier {
       // / PackChecksumMismatch / network errors, all of which we catch
       // below and surface as a fallback transition.
       await _ensurePackForConfig(cfg, serverUrl);
+      // Best-effort GC: drop client-side packs that have been deleted on
+      // the server. The currently-displayed pack id is preserved so a
+      // transient operator delete (or a stale GET) doesn't immediately
+      // yank the screen. Fire-and-forget — must NOT block the path to
+      // `displaying`.
+      final mgr = _ensurePackManager(serverUrl);
+      // ignore: discard_returned_future
+      mgr
+          .syncToServer(preserveId: extractPackIdFromContent(cfg.content))
+          .then((deleted) {
+        if (deleted.isNotEmpty) {
+          debugPrint('Auto-GC removed ${deleted.length} stale pack(s).');
+        }
+      });
       _config = cfg;
       _error = null;
       _cancelFallbackTimer();

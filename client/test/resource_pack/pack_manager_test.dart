@@ -293,6 +293,122 @@ void main() {
         reason: 'staging must be cleaned up on sha mismatch');
   });
 
+  group('syncToServer', () {
+    Future<void> seed(String id) async {
+      final f = await cache.stagingFile(id, 1, 'image.png');
+      await f.writeAsBytes(<int>[1]);
+      await cache.swapCurrent(id, 1);
+    }
+
+    Future<Set<String>> packDirs() async {
+      final root = await cache.root();
+      final names = <String>{};
+      await for (final e in root.list()) {
+        if (e is Directory) {
+          names.add(e.uri.pathSegments.where((s) => s.isNotEmpty).last);
+        }
+      }
+      return names;
+    }
+
+    test('deletes local packs that are missing from the server', () async {
+      await seed('a');
+      await seed('b');
+      await seed('c');
+
+      final client = MockClient((req) async {
+        if (req.url.path == '/packs') {
+          return http.Response(
+            jsonEncode(<Map<String, dynamic>>[
+              {'id': 'a', 'version': 1},
+              {'id': 'c', 'version': 1},
+            ]),
+            200,
+          );
+        }
+        return http.Response('nope', 404);
+      });
+      final mgr = PackManager(
+        serverBaseUrl: 'http://server',
+        cache: cache,
+        wifiGuard: _FakeWifi(true),
+        httpClient: client,
+      );
+
+      final deleted = await mgr.syncToServer();
+      expect(deleted, equals(<String>['b']));
+      expect(await packDirs(), equals(<String>{'a', 'c'}));
+    });
+
+    test('preserveId keeps the named pack even if missing server-side',
+        () async {
+      await seed('a');
+      await seed('b');
+      await seed('c');
+
+      final client = MockClient((req) async {
+        if (req.url.path == '/packs') {
+          return http.Response(
+            jsonEncode(<Map<String, dynamic>>[
+              {'id': 'a', 'version': 1},
+              {'id': 'c', 'version': 1},
+            ]),
+            200,
+          );
+        }
+        return http.Response('nope', 404);
+      });
+      final mgr = PackManager(
+        serverBaseUrl: 'http://server',
+        cache: cache,
+        wifiGuard: _FakeWifi(true),
+        httpClient: client,
+      );
+
+      final deleted = await mgr.syncToServer(preserveId: 'b');
+      expect(deleted, isEmpty);
+      expect(await packDirs(), equals(<String>{'a', 'b', 'c'}));
+    });
+
+    test('HTTP 500 is a no-op — cache untouched', () async {
+      await seed('a');
+      await seed('b');
+
+      final client = MockClient((req) async {
+        return http.Response('boom', 500);
+      });
+      final mgr = PackManager(
+        serverBaseUrl: 'http://server',
+        cache: cache,
+        wifiGuard: _FakeWifi(true),
+        httpClient: client,
+      );
+
+      final deleted = await mgr.syncToServer();
+      expect(deleted, isEmpty);
+      expect(await packDirs(), equals(<String>{'a', 'b'}));
+    });
+
+    test('malformed body (not a list) is a no-op', () async {
+      await seed('a');
+      await seed('b');
+
+      final client = MockClient((req) async {
+        return http.Response('{"oops":true}', 200);
+      });
+      final mgr = PackManager(
+        serverBaseUrl: 'http://server',
+        cache: cache,
+        wifiGuard: _FakeWifi(true),
+        httpClient: client,
+      );
+
+      final deleted = await mgr.syncToServer();
+      expect(deleted, isEmpty);
+      expect(await packDirs(), equals(<String>{'a', 'b'}));
+    });
+  });
+
   test('Wi-Fi + sha mismatch: throws PackChecksumMismatch, no swap',
       () async {
     final bytes = List<int>.generate(64, (i) => i);

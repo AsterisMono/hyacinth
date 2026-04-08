@@ -172,6 +172,47 @@ class PackCache {
     await tmp.rename(dest.path);
   }
 
+  /// Deletes every pack directory under [root] whose id is NOT in
+  /// [liveIds]. If [preserveId] is non-null, that single pack id is
+  /// kept regardless of whether it appears in [liveIds] — used by the
+  /// auto-sync path so a transient operator delete doesn't immediately
+  /// yank the currently-displayed pack.
+  ///
+  /// Returns the list of pack ids that were actually deleted.
+  Future<List<String>> gcMissingPacks(
+    Set<String> liveIds, {
+    String? preserveId,
+  }) async {
+    final r = await root();
+    if (!await r.exists()) return const <String>[];
+    final deleted = <String>[];
+    await for (final entry in r.list()) {
+      if (entry is! Directory) continue;
+      final segs = entry.uri.pathSegments
+          .where((s) => s.isNotEmpty)
+          .toList();
+      if (segs.isEmpty) continue;
+      final id = segs.last;
+      if (liveIds.contains(id)) continue;
+      if (id == preserveId) continue;
+      await entry.delete(recursive: true);
+      deleted.add(id);
+    }
+    return deleted;
+  }
+
+  /// Removes the entire pack root, then recreates it empty. Used by the
+  /// "Clear pack cache" button in the fallback Settings.
+  Future<void> wipeAll() async {
+    final r = await root();
+    if (await r.exists()) {
+      await r.delete(recursive: true);
+    }
+    // Recreate empty so subsequent operations don't have to special-case
+    // the missing-root path.
+    await r.create(recursive: true);
+  }
+
   /// Garbage-collects old versions of [packId], keeping the [keepLast]
   /// highest version numbers. The active version (per `current`) is
   /// always retained even if it would otherwise fall outside the window.

@@ -104,10 +104,44 @@ class _SettingsBlockState extends State<SettingsBlock> {
     );
   }
 
-  void _clearPackCache() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('No pack cache yet (M5)')),
+  Future<void> _clearPackCache() async {
+    // Confirmation dialog. We're about to nuke an arbitrary amount of
+    // disk; make the user mean it.
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear pack cache?'),
+        content: const Text(
+          'This deletes every locally-cached resource pack. The next '
+          'time the display loads a pack, it will be re-downloaded '
+          'from the server.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
     );
+    if (confirmed != true) return;
+    if (!mounted) return;
+    try {
+      await widget.appState.packCache.wipeAll();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pack cache cleared.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to clear pack cache: $e')),
+      );
+    }
   }
 
   Future<void> _reloadNow() async {

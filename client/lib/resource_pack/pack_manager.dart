@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'pack_cache.dart';
@@ -252,6 +253,48 @@ class PackManager {
       await finalDir.delete(recursive: true);
     }
     await stagingDir.rename(finalDir.path);
+  }
+
+  /// GETs `<base>/packs`, builds the set of live pack ids, and asks
+  /// [cache] to delete any local pack that's missing from the server.
+  /// Pass the currently-displayed pack id as [preserveId] so a stale
+  /// operator delete doesn't immediately yank the screen.
+  ///
+  /// Best-effort. On any HTTP/JSON error this is a no-op (debug-print
+  /// the failure and return) — the calling site is fire-and-forget.
+  Future<List<String>> syncToServer({String? preserveId}) async {
+    try {
+      final resp = await _http.get(Uri.parse('$_baseUrl/packs'));
+      if (resp.statusCode != 200) {
+        debugPrint('PackManager.syncToServer: HTTP ${resp.statusCode}');
+        return const <String>[];
+      }
+      final raw = jsonDecode(resp.body);
+      if (raw is! List) {
+        debugPrint('PackManager.syncToServer: body is not a list');
+        return const <String>[];
+      }
+      final liveIds = <String>{};
+      for (final entry in raw) {
+        if (entry is Map<String, dynamic>) {
+          final id = entry['id'];
+          if (id is String && id.isNotEmpty) liveIds.add(id);
+        }
+      }
+      final deleted = await cache.gcMissingPacks(
+        liveIds,
+        preserveId: preserveId,
+      );
+      if (deleted.isNotEmpty) {
+        debugPrint(
+          'PackManager.syncToServer: deleted ${deleted.join(", ")}',
+        );
+      }
+      return deleted;
+    } catch (e) {
+      debugPrint('PackManager.syncToServer failed: $e');
+      return const <String>[];
+    }
   }
 
   Future<http.StreamedResponse> _getDownload(String packId) async {

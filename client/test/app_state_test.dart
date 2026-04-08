@@ -77,6 +77,13 @@ class _FakePackManager extends PackManager {
 
   bool fail;
   final List<String> calls = <String>[];
+  final List<String?> syncCalls = <String?>[];
+
+  @override
+  Future<List<String>> syncToServer({String? preserveId}) async {
+    syncCalls.add(preserveId);
+    return const <String>[];
+  }
 
   @override
   Future<PackManifest> ensure(String packId) async {
@@ -485,6 +492,46 @@ void main() {
       await state.start();
       expect(state.phase, AppPhase.displaying);
       expect(fake.calls, isEmpty);
+      state.dispose();
+    });
+
+    test(
+        'start() with pack content calls syncToServer with preserveId',
+        () async {
+      final fake = _FakePackManager();
+      final state = AppState(
+        store: ConfigStore(),
+        client: _PackConfigClient(packCfg),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        packManagerFactory: (_) => fake,
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      // Drain microtasks so the fire-and-forget sync call lands.
+      await Future<void>.delayed(Duration.zero);
+      expect(state.phase, AppPhase.displaying);
+      expect(fake.syncCalls, <String?>['neko'],
+          reason: 'auto-sync must preserve the currently-displayed pack');
+      state.dispose();
+    });
+
+    test(
+        'start() with https content still calls syncToServer (preserveId '
+        'null)', () async {
+      final fake = _FakePackManager();
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        packManagerFactory: (_) => fake,
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      await Future<void>.delayed(Duration.zero);
+      expect(state.phase, AppPhase.displaying);
+      expect(fake.syncCalls, <String?>[null]);
       state.dispose();
     });
 
