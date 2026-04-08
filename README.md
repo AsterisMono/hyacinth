@@ -11,7 +11,8 @@ The client is a normal Android app launched from the app drawer (M4.7 tried wiri
 ## Layout
 
 - `client/` — Flutter app (Android target). WebView display, onboarding, fallback/settings/health screens.
-- `server/` — Go HTTP + WebSocket server. Holds `HyacinthConfig`, serves the operator UI inlined in `server.go`.
+- `server/` — Go HTTP + WebSocket server. Holds `HyacinthConfig`, embeds the operator UI from `operator.html` via `//go:embed`.
+- `packs/` — Vite-built content packs (one subdirectory per pack id). Built with `just pack-build <id>` and uploaded with `just pack-upload <id>`. Scaffold new ones via the `hyacinth-pack` skill.
 - `Justfile` — task runner (see below).
 - `plan.md` — milestone plan and context.
 - `CLAUDE.md` — guidance for future Claude Code sessions on this repo.
@@ -30,9 +31,11 @@ Recipes in the top-level `Justfile`. Run from the repo root.
 - `just apk-install` — build the release APK and `adb install -r` it on a connected device.
 - `just install` — build the debug APK and `flutter install` it on a connected device.
 
-### Installing `just`
+Content pack recipes (require `pnpm` — install via `corepack enable`, ships with Node 16.13+):
 
-On Fedora 43: `sudo dnf install just`. Via Cargo: `cargo install just`. See https://just.systems for other platforms.
+- `just pack-dev <id>` — live pack dev on the target tablet (M15.1). With `HYACINTH_SERVER` + `HYACINTH_TOKEN` set, pushes the `vite --host` dev URL onto the kiosk's `/config` and Vite HMR patches the running pack on every save; restores the original config on exit. Without env vars (or if the kiosk is unreachable) it falls back to a plain local `vite` preview at `http://localhost:5173/`. Requires `jq` for the `/config` round-trip.
+- `just pack-build <id>` — `vite build` then `pack-lint` (the M15 offline-pure invariant: zero `https://` references in `dist/`, namespace URIs whitelisted).
+- `just pack-upload <id>` — build, zip `dist/`, `POST /packs` to the kiosk (uses `HYACINTH_SERVER` and `HYACINTH_TOKEN`).
 
 ## Granting `WRITE_SECURE_SETTINGS`
 
@@ -82,31 +85,6 @@ If no token is set at startup, the server logs a `WARNING` line on the
 first line of output. That's intentional — it's a reminder that the LAN
 is the only thing standing between strangers and your config.
 
-## Cleartext on the LAN (M15.3)
-
-Hyacinth assumes a private home Wi-Fi as its entire universe. The
-WebView talks to its own local Go server on `localhost`, the operator
-phone hits that same server over plain HTTP from across the room, and
-the realistic content URLs the kiosk loads (a Vite dev server during
-pack iteration, a local home automation dashboard, an in-house photo
-frame source) all live on the same LAN over HTTP. So the release APK
-declares `android:usesCleartextTraffic="true"` on `<application>` and
-ships no `network_security_config.xml` at all — debug and release
-builds are now in lockstep, and `pack-dev` works against either.
-
-This wasn't always the shape. M8 originally added an NSC that
-whitelisted cleartext for `localhost` + `10.0.2.2` only and locked
-down everything else, on the theory that a hardened HTTPS deployment
-might want it later. M15.1 then had to bolt a debug-build overlay on
-top because release tablets couldn't reach the Vite dev server. M15.3
-collapsed both into one honest decision: a tablet that lives inside
-one Wi-Fi gets cleartext. A tablet that ever leaves the house wants
-TLS — terminate it at the kiosk server (or in front of it), and add a
-fresh `network_security_config.xml` with
-`cleartextTrafficPermitted="false"` to re-enable the platform's
-blocking. The un-do path is one XML file and one manifest attribute
-flip.
-
 ## Screen on/off
 
 Hyacinth's operator UI has "Screen off" and "Screen on" buttons in
@@ -135,37 +113,6 @@ dialog.
 If you need reliable wake from deep sleep on a non-rooted tablet,
 the realistic answer is to root it.
 
-## End-to-end smoke checklist
-
-Run this after every fresh deploy. The tablet is referred to as `T`,
-the host running the server as `H`, and the operator browser as `B`.
-
-1. On `H`: `cd server && HYACINTH_TOKEN=mytoken go run .`
-2. On `T`: `just apk-install` from `H` (or `adb install -r
-   client/build/app/outputs/flutter-apk/app-release.apk`).
-3. On `T`: grant `WRITE_SECURE_SETTINGS` either by completing the
-   onboarding root step (rooted tablets) or by running
-   `adb shell pm grant io.hyacinth.hyacinth android.permission.WRITE_SECURE_SETTINGS`.
-4. On `T`: tap Hyacinth in the app drawer. The onboarding page should
-   accept `http://<H-ip>:8080` and proceed to the WebView.
-5. On `B`: open `http://<H-ip>:8080/` in any browser, click the Token
-   icon button (top-right), paste `mytoken`. Verify the connection
-   pill in the status bar goes green.
-6. On `B`: in the Packs section, type a Pack ID and pick an image
-   file — the upload fires immediately on file selection (no Upload
-   button). Click the play_arrow on the new pack row — the tablet's
-   display switches to it within ~1s (no separate Save step).
-7. On `T`: press the system Back gesture from the fullscreen display
-   — the MainActivity / settings page should appear without flicker.
-   Tap "Return to content" to resume.
-8. On `T`: from the operator UI, click "Screen off" then "Screen on"
-   and verify both fire (works on rooted devices reliably; on Device
-   Admin only, the "Screen on" path is best-effort within ~10–30 min
-   of locking).
-9. On `T`: power-cycle the tablet. Re-launch Hyacinth from the
-   drawer; it should restore its server URL and reconnect to the WS
-   without manual input.
-
 ## Status
 
 Major milestones (the small `MX.y` follow-ups are documented in `plan.md`):
@@ -178,10 +125,11 @@ Major milestones (the small `MX.y` follow-ups are documented in `plan.md`):
 - [x] M5 — Resource packs (image)
 - [x] M6 — Resource packs (zip)
 - [x] M7 — Brightness + timeout polish
-- [x] M8 — Hardening: server error paths, auth, NSC, foreground service, pack GC (`+M8.1` root self-grant, `+M8.2` back gesture → MainActivity, `+M8.3` pack cache sync + wipe, `+M8.4` cached packs display, `+M15.3` NSC removed)
+- [x] M8 — Hardening: server error paths, auth, NSC, foreground service, pack GC (`+M8.1` root self-grant, `+M8.2` back gesture → MainActivity, `+M8.3` pack cache sync + wipe, `+M8.4` cached packs display)
 - [x] M9 — Remote screen on/off (root + Device Admin) (`+M9.1–M9.8` operator UI redesign and iteration)
 - [x] M10 — GitHub Actions CI + tag-driven releases (analyze / test / apk on every push and PR; `release` job publishes `hyacinth-<version>.apk` to GitHub Releases on `v*` tags)
 - [x] M11 — Auto powersave CPU governor on display (root-gated, tied to the `displaying` phase lifecycle — no operator UI, no config field; finishes the M7.5 power-profile half)
 - [x] M12 — Touch blocking on display (unconditional `IgnorePointer` over the WebView while `displaying`; back gesture still escapes via M8.2's route-level `PopScope`)
-
-Skipped: **M7.5 — Keyguard + power profile**. The pieces landed in two later milestones instead: M9.1 took the keyguard-wake bits (`showWhenLocked` / `turnScreenOn` + `FULL_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP`), and M11 took the root CPU governor half. The broader `setKeyguardDisabledFeatures` work was never needed and remains unimplemented.
+- [x] M13 — Auto screen on/off on charging state changes (charger connected → screen off, disconnected → screen on; reuses M9.1's `ScreenPower` codepath via a programmatic `BroadcastReceiver` and a `BatteryWatcher` stream — no operator override, no second copy of the tier orchestration)
+- [x] M14 — Operator UI: vellum herbarium redesign (M9.2's bold purple Material You interface re-skinned to match the herbarium content aesthetic; operator HTML extracted into `server/operator.html` and `//go:embed`-ed) (`+M14.1` readable-ink contrast pass, deeper ink on cream paper to clear WCAG AA)
+- [x] M15 — Offline-pure content packs (build-time font bundling via `vite-plugin-webfont-dl`, enforced by `pack-lint`'s zero-`https://` invariant) (`+M15.1` `pack-dev` live-on-tablet HMR loop, `+M15.2` standard-Web-API device telemetry for packs (`navigator.getBattery()` + clock readout), `+M15.3` dropped the release-build network security config so debug and release builds are now in lockstep over cleartext LAN)
