@@ -172,5 +172,8 @@ Major milestones (the small `MX.y` follow-ups are documented in `plan.md`):
 - [x] M7 — Brightness + timeout polish
 - [x] M8 — Hardening: server error paths, auth, NSC, foreground service, pack GC (`+M8.1` root self-grant, `+M8.2` back gesture → MainActivity, `+M8.3` pack cache sync + wipe, `+M8.4` cached packs display)
 - [x] M9 — Remote screen on/off (root + Device Admin) (`+M9.1–M9.8` operator UI redesign and iteration)
+- [x] M10 — GitHub Actions CI + tag-driven releases (analyze / test / apk on every push and PR; `release` job publishes `hyacinth-<version>.apk` to GitHub Releases on `v*` tags)
+- [x] M11 — Auto powersave CPU governor on display (root-gated, tied to the `displaying` phase lifecycle — no operator UI, no config field; finishes the M7.5 power-profile half)
+- [x] M12 — Touch blocking on display (unconditional `IgnorePointer` over the WebView while `displaying`; back gesture still escapes via M8.2's route-level `PopScope`)
 
-Skipped: **M7.5 — Keyguard + power profile**. The keyguard wake bits needed by M9.1 landed on their own; the broader `setKeyguardDisabledFeatures` + root CPU governor work hasn't been needed yet.
+Skipped: **M7.5 — Keyguard + power profile**. The pieces landed in two later milestones instead: M9.1 took the keyguard-wake bits (`showWhenLocked` / `turnScreenOn` + `FULL_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP`), and M11 took the root CPU governor half. The broader `setKeyguardDisabledFeatures` work was never needed and remains unimplemented.
