@@ -180,8 +180,17 @@ class _MainActivityPageState extends State<MainActivityPage> {
         icon = Icons.sync;
         break;
       case AppPhase.fallback:
-        label = 'Fallback';
-        icon = Icons.warning_amber_outlined;
+        // The fallback phase is overloaded: it's the recovery state after
+        // a real error AND the "user pressed Back to access settings"
+        // rest state. Distinguish them by whether an error is set, so the
+        // user-initiated case doesn't read as a scary "Fallback".
+        if (error == null || error.isEmpty) {
+          label = 'Main activity';
+          icon = Icons.dashboard_customize_outlined;
+        } else {
+          label = 'Recovering';
+          icon = Icons.warning_amber_outlined;
+        }
         break;
       case AppPhase.booting:
         label = 'Booting';
