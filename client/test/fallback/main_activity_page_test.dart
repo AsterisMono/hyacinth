@@ -1,12 +1,13 @@
 // Widget test for the fallback MainActivityPage. We mount it with an
 // injected HealthReport so the page renders deterministically without
 // triggering its async refresh, and we subclass AppState to record
-// `retryConnect` calls.
+// `retryConnect` / `returnToDisplaying` calls.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:hyacinth/app_state.dart';
+import 'package:hyacinth/config/config_model.dart';
 import 'package:hyacinth/config/config_store.dart';
 import 'package:hyacinth/fallback/health_check.dart';
 import 'package:hyacinth/fallback/main_activity_page.dart';
@@ -18,7 +19,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _RecordingAppState extends AppState {
-  _RecordingAppState()
+  _RecordingAppState({this.cachedConfig})
       : super(
           store: ConfigStore(),
           client: ConfigClient(
@@ -34,11 +35,26 @@ class _RecordingAppState extends AppState {
           fallbackRetryInterval: const Duration(hours: 1),
         );
 
+  /// When non-null, [config] returns this directly without driving the
+  /// real `_connect()` path (which would touch real platform plugins
+  /// in test mode). This is the "cached config" surface the M8.2
+  /// "Return to content" button reads.
+  final HyacinthConfig? cachedConfig;
+
   int retryCalls = 0;
+  int returnCalls = 0;
+
+  @override
+  HyacinthConfig? get config => cachedConfig ?? super.config;
 
   @override
   Future<void> retryConnect() async {
     retryCalls++;
+  }
+
+  @override
+  Future<void> returnToDisplaying() async {
+    returnCalls++;
   }
 }
 
@@ -207,5 +223,101 @@ void main() {
     );
 
     state.dispose();
+  });
+
+  group('M8.2 Return to content button', () {
+    const minimalReport = HealthReport(<CheckResult>[
+      CheckResult(
+        name: 'Server URL set',
+        status: CheckStatus.ok,
+        message: 'http://server:8080',
+      ),
+    ]);
+
+    const cachedCfg = HyacinthConfig(
+      content: 'https://example.com',
+      contentRevision: 'r1',
+      brightness: 'auto',
+      screenTimeout: 'always-on',
+    );
+
+    testWidgets('shows button when a config is cached', (tester) async {
+      tester.view.physicalSize = const Size(1200, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final state = _RecordingAppState(cachedConfig: cachedCfg);
+      expect(state.config, isNotNull);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MainActivityPage(
+            appState: state,
+            initialReport: minimalReport,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.widgetWithText(FilledButton, 'Return to content'),
+        findsOneWidget,
+      );
+      state.dispose();
+    });
+
+    testWidgets('hides button when no config is cached', (tester) async {
+      tester.view.physicalSize = const Size(1200, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final state = _RecordingAppState();
+      expect(state.config, isNull);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MainActivityPage(
+            appState: state,
+            initialReport: minimalReport,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.widgetWithText(FilledButton, 'Return to content'),
+        findsNothing,
+      );
+      state.dispose();
+    });
+
+    testWidgets('tapping the button calls returnToDisplaying',
+        (tester) async {
+      tester.view.physicalSize = const Size(1200, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final state = _RecordingAppState(cachedConfig: cachedCfg);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MainActivityPage(
+            appState: state,
+            initialReport: minimalReport,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Return to content'),
+      );
+      await tester.pumpAndSettle();
+      expect(state.returnCalls, 1);
+      state.dispose();
+    });
   });
 }

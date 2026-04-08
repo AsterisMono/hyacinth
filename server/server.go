@@ -982,7 +982,7 @@ const indexHTML = `<!DOCTYPE html>
     // Zip packs always have an index.html entry point at the archive
     // root; image packs serve their single content file by name.
     const path = p.type === 'zip' ? 'index.html' : p.filename;
-    return 'app-scheme://pack/' + p.id + '/' + path;
+    return 'hyacinth://pack/' + p.id + '/' + path;
   }
 
   async function loadPackList() {

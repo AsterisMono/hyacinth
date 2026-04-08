@@ -2,22 +2,22 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'pack_cache.dart';
 
-/// Resolves an `app-scheme://pack/<id>/<rel/path>` request to a local
+/// Resolves an `hyacinth://pack/<id>/<rel/path>` request to a local
 /// file under [PackCache]. Returns `null` for any URL that isn't an
-/// `app-scheme://pack/...` (so the WebView falls back to its normal
+/// `hyacinth://pack/...` (so the WebView falls back to its normal
 /// loading path), for any pack file that isn't currently cached, or
 /// for any unsafe relative path.
 ///
 /// Examples:
-///   - `app-scheme://pack/neko/image.png`        → image pack file
-///   - `app-scheme://pack/site/index.html`       → zip pack entry point
-///   - `app-scheme://pack/site/assets/app.js`    → nested zip pack file
-Future<CustomSchemeResponse?> resolveAppScheme(
+///   - `hyacinth://pack/neko/image.png`        → image pack file
+///   - `hyacinth://pack/site/index.html`       → zip pack entry point
+///   - `hyacinth://pack/site/assets/app.js`    → nested zip pack file
+Future<CustomSchemeResponse?> resolveHyacinthScheme(
   WebResourceRequest request,
   PackCache cache,
 ) async {
   final uri = request.url;
-  if (uri.scheme != 'app-scheme') return null;
+  if (uri.scheme != 'hyacinth') return null;
   if (uri.host != 'pack') return null;
   final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
   if (segments.length < 2) return null;
@@ -28,7 +28,7 @@ Future<CustomSchemeResponse?> resolveAppScheme(
   final bytes = await file.readAsBytes();
   return CustomSchemeResponse(
     data: bytes,
-    contentType: guessAppSchemeMime(relPath),
+    contentType: guessHyacinthSchemeMime(relPath),
     contentEncoding: 'utf-8',
   );
 }
@@ -36,7 +36,7 @@ Future<CustomSchemeResponse?> resolveAppScheme(
 /// Maps a filename (or relative path) to a Content-Type, defaulting to
 /// `application/octet-stream`. Public for tests. The set covers the
 /// common files emitted by Vite builds plus a few image/media types.
-String guessAppSchemeMime(String name) {
+String guessHyacinthSchemeMime(String name) {
   final lower = name.toLowerCase();
   // Markup / styling / scripting
   if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'text/html';

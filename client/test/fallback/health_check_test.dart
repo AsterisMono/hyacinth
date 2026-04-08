@@ -175,8 +175,10 @@ void main() {
       final report = await hc.run();
       final root = report.checks.firstWhere((c) => c.name == 'Root access');
       expect(root.status, CheckStatus.unknown);
-      expect(root.message, 'Not checked');
-      expect(root.fix, isNull);
+      expect(root.message, 'Not checked — tap Fix to probe and grant');
+      // M8.2 Fix button: lets users probe root from HealthCheck for
+      // existing installs that never re-ran onboarding.
+      expect(root.fix, isNotNull);
     });
 
     test('root row: ok when checked + available', () async {

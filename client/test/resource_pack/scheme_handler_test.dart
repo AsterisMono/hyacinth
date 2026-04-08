@@ -37,8 +37,8 @@ void main() {
   });
 
   test('resolves a cached pack file', () async {
-    final resp = await resolveAppScheme(
-      _req('app-scheme://pack/neko/image.png'),
+    final resp = await resolveHyacinthScheme(
+      _req('hyacinth://pack/neko/image.png'),
       cache,
     );
     expect(resp, isNotNull);
@@ -46,8 +46,8 @@ void main() {
     expect(resp.data, <int>[0x89, 0x50, 0x4E, 0x47, 1, 2, 3, 4]);
   });
 
-  test('returns null for non-app-scheme requests', () async {
-    final r = await resolveAppScheme(
+  test('returns null for non-hyacinth requests', () async {
+    final r = await resolveHyacinthScheme(
       _req('https://example.com/foo'),
       cache,
     );
@@ -55,45 +55,45 @@ void main() {
   });
 
   test('returns null for unknown pack id', () async {
-    final r = await resolveAppScheme(
-      _req('app-scheme://pack/missing/image.png'),
+    final r = await resolveHyacinthScheme(
+      _req('hyacinth://pack/missing/image.png'),
       cache,
     );
     expect(r, isNull);
   });
 
   test('returns null when host is not "pack"', () async {
-    final r = await resolveAppScheme(
-      _req('app-scheme://other/foo/bar'),
+    final r = await resolveHyacinthScheme(
+      _req('hyacinth://other/foo/bar'),
       cache,
     );
     expect(r, isNull);
   });
 
-  test('guessAppSchemeMime maps the common extensions', () {
-    expect(guessAppSchemeMime('image.png'), 'image/png');
-    expect(guessAppSchemeMime('PHOTO.JPG'), 'image/jpeg');
-    expect(guessAppSchemeMime('hi.jpeg'), 'image/jpeg');
-    expect(guessAppSchemeMime('a.webp'), 'image/webp');
-    expect(guessAppSchemeMime('a.gif'), 'image/gif');
-    expect(guessAppSchemeMime('mystery.bin'), 'application/octet-stream');
+  test('guessHyacinthSchemeMime maps the common extensions', () {
+    expect(guessHyacinthSchemeMime('image.png'), 'image/png');
+    expect(guessHyacinthSchemeMime('PHOTO.JPG'), 'image/jpeg');
+    expect(guessHyacinthSchemeMime('hi.jpeg'), 'image/jpeg');
+    expect(guessHyacinthSchemeMime('a.webp'), 'image/webp');
+    expect(guessHyacinthSchemeMime('a.gif'), 'image/gif');
+    expect(guessHyacinthSchemeMime('mystery.bin'), 'application/octet-stream');
   });
 
-  test('guessAppSchemeMime maps zip-pack types', () {
-    expect(guessAppSchemeMime('index.html'), 'text/html');
-    expect(guessAppSchemeMime('assets/app.css'), 'text/css');
-    expect(guessAppSchemeMime('assets/app.js'), 'application/javascript');
-    expect(guessAppSchemeMime('app.mjs'), 'application/javascript');
-    expect(guessAppSchemeMime('data.json'), 'application/json');
-    expect(guessAppSchemeMime('icon.svg'), 'image/svg+xml');
-    expect(guessAppSchemeMime('favicon.ico'), 'image/x-icon');
-    expect(guessAppSchemeMime('font.woff2'), 'font/woff2');
-    expect(guessAppSchemeMime('font.woff'), 'font/woff');
-    expect(guessAppSchemeMime('font.ttf'), 'font/ttf');
-    expect(guessAppSchemeMime('font.otf'), 'font/otf');
-    expect(guessAppSchemeMime('clip.mp4'), 'video/mp4');
-    expect(guessAppSchemeMime('clip.webm'), 'video/webm');
-    expect(guessAppSchemeMime('readme.txt'), 'text/plain');
+  test('guessHyacinthSchemeMime maps zip-pack types', () {
+    expect(guessHyacinthSchemeMime('index.html'), 'text/html');
+    expect(guessHyacinthSchemeMime('assets/app.css'), 'text/css');
+    expect(guessHyacinthSchemeMime('assets/app.js'), 'application/javascript');
+    expect(guessHyacinthSchemeMime('app.mjs'), 'application/javascript');
+    expect(guessHyacinthSchemeMime('data.json'), 'application/json');
+    expect(guessHyacinthSchemeMime('icon.svg'), 'image/svg+xml');
+    expect(guessHyacinthSchemeMime('favicon.ico'), 'image/x-icon');
+    expect(guessHyacinthSchemeMime('font.woff2'), 'font/woff2');
+    expect(guessHyacinthSchemeMime('font.woff'), 'font/woff');
+    expect(guessHyacinthSchemeMime('font.ttf'), 'font/ttf');
+    expect(guessHyacinthSchemeMime('font.otf'), 'font/otf');
+    expect(guessHyacinthSchemeMime('clip.mp4'), 'video/mp4');
+    expect(guessHyacinthSchemeMime('clip.webm'), 'video/webm');
+    expect(guessHyacinthSchemeMime('readme.txt'), 'text/plain');
   });
 
   test('resolves a nested zip-pack file', () async {
@@ -105,15 +105,15 @@ void main() {
     await File('$base/assets/app.js').writeAsString('let x=1;');
     await cache.swapCurrent('site', 1);
 
-    final idx = await resolveAppScheme(
-      _req('app-scheme://pack/site/index.html'),
+    final idx = await resolveHyacinthScheme(
+      _req('hyacinth://pack/site/index.html'),
       cache,
     );
     expect(idx, isNotNull);
     expect(idx!.contentType, 'text/html');
 
-    final js = await resolveAppScheme(
-      _req('app-scheme://pack/site/assets/app.js'),
+    final js = await resolveHyacinthScheme(
+      _req('hyacinth://pack/site/assets/app.js'),
       cache,
     );
     expect(js, isNotNull);
@@ -122,16 +122,16 @@ void main() {
   });
 
   test('returns null for unsafe nested rel path', () async {
-    final r = await resolveAppScheme(
-      _req('app-scheme://pack/neko/..%2Fevil.txt'),
+    final r = await resolveHyacinthScheme(
+      _req('hyacinth://pack/neko/..%2Fevil.txt'),
       cache,
     );
     expect(r, isNull);
   });
 
   test('returns null when only the pack id is given (no file)', () async {
-    final r = await resolveAppScheme(
-      _req('app-scheme://pack/neko'),
+    final r = await resolveHyacinthScheme(
+      _req('hyacinth://pack/neko'),
       cache,
     );
     expect(r, isNull);

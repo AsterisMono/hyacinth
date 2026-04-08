@@ -33,12 +33,20 @@ class DisplayPage extends StatefulWidget {
     super.key,
     required this.config,
     this.packCache,
+    this.onBackRequested,
     WindowBrightness? windowBrightness,
     SecureSettings? secureSettings,
   })  : _windowBrightness = windowBrightness,
         _secureSettings = secureSettings;
 
   final HyacinthConfig config;
+
+  /// Invoked when the user triggers the system Back gesture from the
+  /// fullscreen display. The parent (`HyacinthApp`) wires this to
+  /// `AppState.requestMainActivity` so control returns to the M3
+  /// MainActivityPage. Left null in widget-only tests that don't care
+  /// about the back path.
+  final VoidCallback? onBackRequested;
 
   /// Pack cache used by the WebView's `app-scheme://` resolver. Optional
   /// — when null, only `https://` content URLs work.
@@ -260,9 +268,20 @@ class _DisplayPageState extends State<DisplayPage>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SizedBox.expand(child: _webView),
+    return PopScope(
+      // canPop: false — intercept the Back gesture so Flutter does NOT
+      // pop the route out from under us. We hand the event up to AppState
+      // via the injected callback, which transitions to fallback and
+      // re-mounts MainActivityPage through the normal phase-router path.
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        widget.onBackRequested?.call();
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SizedBox.expand(child: _webView),
+      ),
     );
   }
 }

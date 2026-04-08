@@ -119,11 +119,13 @@ class _OnboardingPageState extends State<OnboardingPage> {
   Future<void> _runRootProbe() async {
     setState(() => _rootChecking = true);
     final summary = await _root.autoGrantAll();
-    final store = widget.store;
-    if (store != null) {
-      await store.setRootChecked(true);
-      await store.setRootAvailable(summary.rootAvailable);
-    }
+    // Production code path leaves widget.store null and we used to skip
+    // the writes entirely — that meant the HealthCheck "Root access" row
+    // stayed grey forever after onboarding. Always persist via either the
+    // injected store (test) or a fresh ConfigStore() (prod).
+    final store = widget.store ?? ConfigStore();
+    await store.setRootChecked(true);
+    await store.setRootAvailable(summary.rootAvailable);
     if (!mounted) return;
     setState(() {
       _rootChecking = false;

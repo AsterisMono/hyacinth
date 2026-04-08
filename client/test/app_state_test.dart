@@ -429,7 +429,7 @@ void main() {
 
   group('M5 resource pack hookup', () {
     const packCfg = HyacinthConfig(
-      content: 'app-scheme://pack/neko/image.png',
+      content: 'hyacinth://pack/neko/image.png',
       contentRevision: 'r1',
       brightness: 'auto',
       screenTimeout: 'always-on',
@@ -450,7 +450,7 @@ void main() {
       expect(state.phase, AppPhase.displaying);
       expect(fake.calls, <String>['neko']);
       expect(state.config?.content,
-          'app-scheme://pack/neko/image.png');
+          'hyacinth://pack/neko/image.png');
       state.dispose();
     });
 
@@ -488,15 +488,167 @@ void main() {
       state.dispose();
     });
 
-    test('extractPackIdFromContent parses app-scheme URLs', () {
+    test('extractPackIdFromContent parses hyacinth URLs', () {
       expect(extractPackIdFromContent('https://example.com'), isNull);
       expect(
-          extractPackIdFromContent('app-scheme://pack/neko/image.png'), 'neko');
+          extractPackIdFromContent('hyacinth://pack/neko/image.png'), 'neko');
       expect(
-          extractPackIdFromContent('app-scheme://pack/foo-bar/sub/file.png'),
+          extractPackIdFromContent('hyacinth://pack/foo-bar/sub/file.png'),
           'foo-bar');
-      expect(extractPackIdFromContent('app-scheme://other/x'), isNull);
+      expect(extractPackIdFromContent('hyacinth://other/x'), isNull);
       expect(extractPackIdFromContent(''), isNull);
+    });
+  });
+
+  group('M8.2 back gesture → MainActivity', () {
+    late List<WsClient> created;
+    WsClientFactory makeFactory() {
+      created = <WsClient>[];
+      return (baseUrl, onConfigUpdate) {
+        final ws = WsClient(
+          baseUrl: baseUrl,
+          channelFactory: (_) => _NeverChannel(),
+          onConfigUpdate: onConfigUpdate,
+        );
+        created.add(ws);
+        return ws;
+      };
+    }
+
+    test(
+        'requestMainActivity while displaying → fallback, config preserved, '
+        'error cleared', () async {
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: makeFactory(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.displaying);
+      expect(state.config, isNotNull);
+      state.requestMainActivity();
+      expect(state.phase, AppPhase.fallback);
+      expect(state.config, isNotNull,
+          reason: 'cached config must survive back gesture');
+      expect(state.error, isNull,
+          reason: 'back is user-initiated, not an error');
+      state.dispose();
+    });
+
+    test('requestMainActivity while already in fallback is a no-op',
+        () async {
+      final state = AppState(
+        store: ConfigStore(),
+        client: _ThrowingConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: makeFactory(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.fallback);
+      var fired = 0;
+      state.addListener(() => fired++);
+      state.requestMainActivity();
+      expect(state.phase, AppPhase.fallback);
+      expect(fired, 0,
+          reason: 'no-op transition must not notify listeners');
+      state.dispose();
+    });
+
+    test('requestMainActivity tears down the active WsClient', () async {
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: makeFactory(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(created, hasLength(1));
+      final firstWs = created.single;
+      expect(firstWs.isDisposed, isFalse);
+      state.requestMainActivity();
+      expect(firstWs.isDisposed, isTrue,
+          reason: 'leaving displaying must disconnect the WsClient');
+      state.dispose();
+    });
+
+    test(
+        'returnToDisplaying with cached config → displaying, config unchanged',
+        () async {
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: makeFactory(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      final cachedBefore = state.config;
+      state.requestMainActivity();
+      expect(state.phase, AppPhase.fallback);
+      await state.returnToDisplaying();
+      expect(state.phase, AppPhase.displaying);
+      expect(state.config, same(cachedBefore),
+          reason: 'returnToDisplaying must reuse the cached config');
+      state.dispose();
+    });
+
+    test('returnToDisplaying with no cached config is a no-op', () async {
+      final state = AppState(
+        store: ConfigStore(),
+        client: _ThrowingConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: makeFactory(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.fallback);
+      expect(state.config, isNull);
+      await state.returnToDisplaying();
+      expect(state.phase, AppPhase.fallback,
+          reason: 'no cached config means nothing to return to');
+      state.dispose();
+    });
+
+    test('returnToDisplaying constructs a fresh WsClient', () async {
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: makeFactory(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(created, hasLength(1));
+      state.requestMainActivity();
+      expect(created.first.isDisposed, isTrue);
+      await state.returnToDisplaying();
+      expect(state.phase, AppPhase.displaying);
+      expect(created, hasLength(2),
+          reason: 're-entering displaying must build a new WsClient');
+      expect(created.last.isDisposed, isFalse);
+      state.dispose();
+    });
+
+    test('returnToDisplaying while already displaying is a no-op', () async {
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: makeFactory(),
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      expect(state.phase, AppPhase.displaying);
+      expect(created, hasLength(1));
+      await state.returnToDisplaying();
+      expect(state.phase, AppPhase.displaying);
+      expect(created, hasLength(1),
+          reason: 'no fresh WsClient when already displaying');
+      state.dispose();
     });
   });
 

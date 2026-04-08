@@ -31,7 +31,7 @@ WsClient _defaultWsClientFactory(
 ) =>
     WsClient(baseUrl: baseUrl, onConfigUpdate: onConfigUpdate);
 
-/// Pulls a `<id>` out of `app-scheme://pack/<id>/...` URLs. Returns null
+/// Pulls a `<id>` out of `hyacinth://pack/<id>/...` URLs. Returns null
 /// for any other shape (regular `https://`, malformed, etc.).
 String? extractPackIdFromContent(String content) {
   Uri uri;
@@ -40,7 +40,7 @@ String? extractPackIdFromContent(String content) {
   } catch (_) {
     return null;
   }
-  if (uri.scheme != 'app-scheme') return null;
+  if (uri.scheme != 'hyacinth') return null;
   if (uri.host != 'pack') return null;
   final segs = uri.pathSegments.where((s) => s.isNotEmpty).toList();
   if (segs.isEmpty) return null;
@@ -137,6 +137,39 @@ class AppState extends ChangeNotifier {
     _startFallbackTimer();
   }
 
+  /// User pressed the system Back gesture from the fullscreen display.
+  /// Transitions to `fallback` WITHOUT setting an error and WITHOUT
+  /// clearing the cached config, so the "Return to content" button on
+  /// MainActivityPage stays enabled.
+  ///
+  /// Leaving `displaying` routes through `_setPhase`, which disconnects
+  /// the live `WsClient`. The status footer reads "Fallback" but with no
+  /// error message — the intended "user-initiated rest state".
+  void requestMainActivity() {
+    if (_phase == AppPhase.fallback) return;
+    _error = null;
+    _setPhase(AppPhase.fallback);
+  }
+
+  /// Transition back to displaying the cached content. No-op if no
+  /// config is cached (the button on the page is hidden in that case).
+  ///
+  /// Reopens a fresh `WsClient` because `_setPhase` only tears down the
+  /// old one on the way OUT of displaying — there is no construct-on-enter
+  /// path inside `_setPhase`. We mirror what `_connect()` does at the end
+  /// of its happy path.
+  Future<void> returnToDisplaying() async {
+    if (_config == null) return;
+    if (_phase == AppPhase.displaying) return;
+    _error = null;
+    _cancelFallbackTimer();
+    final serverUrl = await _store.loadServerUrl();
+    if (serverUrl != null && serverUrl.trim().isNotEmpty) {
+      _openWsClient(serverUrl);
+    }
+    _setPhase(AppPhase.displaying);
+  }
+
   /// Re-runs the health checks on demand. If any previously-green check
   /// has regressed, flips into `fallback` (the "revoking a permission
   /// flips the UI" behaviour in the M2 verification steps).
@@ -179,7 +212,7 @@ class AppState extends ChangeNotifier {
         return;
       }
       final cfg = await _client.fetch(serverUrl);
-      // If the new content URL is an `app-scheme://pack/<id>/...`, we
+      // If the new content URL is an `hyacinth://pack/<id>/...`, we
       // must materialize the pack on disk before mounting DisplayPage —
       // otherwise the WebView's first GET hits the cache miss path and
       // shows broken content. ensurePackForConfig() throws PackUnavailable
@@ -241,7 +274,7 @@ class AppState extends ChangeNotifier {
     return mgr;
   }
 
-  /// If [cfg.content] is an `app-scheme://pack/<id>/...` URL, asks the
+  /// If [cfg.content] is an `hyacinth://pack/<id>/...` URL, asks the
   /// pack manager to fetch/verify it. No-op for `https://` URLs. Throws
   /// on failure — callers in [_connect] / [_applyConfig] decide what to
   /// do with that.
@@ -288,7 +321,7 @@ class AppState extends ChangeNotifier {
         (newPackId != oldPackId || next.content != _config?.content);
     if (needsPackEnsure) {
       // Ensure the pack BEFORE swapping the config so the WebView is
-      // never asked to render an `app-scheme://` URL whose bytes aren't
+      // never asked to render an `hyacinth://` URL whose bytes aren't
       // on disk yet. On failure we leave the existing config in place
       // and log — the operator will see the old content keep showing.
       // ignore: discard_returned_future

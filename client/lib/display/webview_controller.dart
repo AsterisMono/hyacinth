@@ -26,9 +26,9 @@ void debugSetWebViewBuilder(WebViewBuilder? builder) {
 /// case: fullscreen, no zoom controls, JavaScript enabled, media autoplay
 /// without a user gesture.
 ///
-/// **M5**: declares `app-scheme` as a custom resource scheme and routes
-/// requests through [resolveAppScheme] so URLs of the form
-/// `app-scheme://pack/<id>/<file>` resolve out of the local [PackCache]
+/// **M5**: declares `hyacinth` as a custom resource scheme and routes
+/// requests through [resolveHyacinthScheme] so URLs of the form
+/// `hyacinth://pack/<id>/<file>` resolve out of the local [PackCache]
 /// without ever touching the network.
 class HyacinthWebView extends StatelessWidget {
   const HyacinthWebView({
@@ -39,7 +39,7 @@ class HyacinthWebView extends StatelessWidget {
 
   final String url;
 
-  /// Optional pack cache used by the `app-scheme://` resolver. Production
+  /// Optional pack cache used by the `hyacinth://` resolver. Production
   /// passes the singleton from [DisplayPage]; tests can pass a temp-dir
   /// backed cache or omit it entirely (the resolver simply returns null
   /// for every request and the WebView falls through to its default).
@@ -62,12 +62,12 @@ class HyacinthWebView extends StatelessWidget {
         builtInZoomControls: false,
         javaScriptEnabled: true,
         domStorageEnabled: true,
-        resourceCustomSchemes: const ['app-scheme'],
+        resourceCustomSchemes: const ['hyacinth'],
       ),
       onLoadResourceWithCustomScheme: (controller, request) async {
         final cache = packCache;
         if (cache == null) return null;
-        return resolveAppScheme(request, cache);
+        return resolveHyacinthScheme(request, cache);
       },
     );
   }

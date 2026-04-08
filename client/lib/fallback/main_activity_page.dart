@@ -102,7 +102,25 @@ class _MainActivityPageState extends State<MainActivityPage> {
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 1200),
-                child: body,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (widget.appState.config != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: () =>
+                                widget.appState.returnToDisplaying(),
+                            icon: const Icon(Icons.play_arrow_rounded),
+                            label: const Text('Return to content'),
+                          ),
+                        ),
+                      ),
+                    body,
+                  ],
+                ),
               ),
             ),
           );

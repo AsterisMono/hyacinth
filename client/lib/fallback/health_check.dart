@@ -147,16 +147,26 @@ class HealthCheck {
   }
 
   /// M8.1 — root visibility row. Reads only the cached state from
-  /// [ConfigStore]; we never call `hasRoot()` here because that would
-  /// fire a Magisk prompt. Root absence is `unknown`, NEVER `fail`,
+  /// [ConfigStore] for the *display* — we never call `hasRoot()`
+  /// passively because that would fire a Magisk prompt every time the
+  /// fallback page is opened. Root absence is `unknown`, NEVER `fail`,
   /// since manual `pm grant` from a laptop is a perfectly valid setup.
+  ///
+  /// If `rootChecked == false` (e.g. user upgraded over an existing
+  /// install and never re-ran onboarding), the row exposes a Fix
+  /// button that runs the probe explicitly and updates the cache.
   Future<CheckResult> _rootCheck() async {
     final checked = await _store.getRootChecked();
     if (!checked) {
-      return const CheckResult(
+      return CheckResult(
         name: 'Root access',
         status: CheckStatus.unknown,
-        message: 'Not checked',
+        message: 'Not checked — tap Fix to probe and grant',
+        fix: () async {
+          final summary = await _rootHelper.autoGrantAll();
+          await _store.setRootChecked(true);
+          await _store.setRootAvailable(summary.rootAvailable);
+        },
       );
     }
     final available = await _store.getRootAvailable();
