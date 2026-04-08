@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hyacinth Operator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400;1,500&display=swap" rel="stylesheet">
+<!-- Material Symbols Outlined — required by every <md-icon> on the page.
+     Without it, md-icon falls back to rendering the icon name as text. -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "@material/web/": "https://esm.run/@material/web/"
+  }
+}
+</script>
+<script type="module">
+  import '@material/web/all.js';
+  import {styles as typescaleStyles} from '@material/web/typography/md-typescale-styles.js';
+  document.adoptedStyleSheets.push(typescaleStyles.styleSheet);
+</script>
+<style>
+  /* M14: Herbarium palette — cream paper, forest ink, sage accents.
+     No dark mode — paper is paper. The Material 3 component vocabulary
+     stays; only color tokens, fonts, and chrome change. */
+  :root {
+    --hy-paper:       #F4F2DA;
+    --hy-ink:         #1C3A1F;
+    --hy-sage:        #7A8C6E;
+    --hy-sage-bright: #6B7F5C;
+    --hy-hairline:    #D8D5BC;
+    --hy-rust:        #8C3A28;
+    --hy-mustard:     #B89C5A;
+    --hy-ink-soft:    #3A4F38;
+
+    --md-sys-color-primary: #1C3A1F;
+    --md-sys-color-on-primary: #F4F2DA;
+    --md-sys-color-primary-container: #D8E0C8;
+    --md-sys-color-on-primary-container: #1C3A1F;
+    --md-sys-color-secondary: #7A8C6E;
+    --md-sys-color-on-secondary: #F4F2DA;
+    --md-sys-color-secondary-container: #E3E2C6;
+    --md-sys-color-on-secondary-container: #1C3A1F;
+    --md-sys-color-tertiary: #7A8C6E;
+    --md-sys-color-on-tertiary: #F4F2DA;
+    --md-sys-color-background: #F4F2DA;
+    --md-sys-color-on-background: #1C3A1F;
+    --md-sys-color-surface: #F4F2DA;
+    --md-sys-color-on-surface: #1C3A1F;
+    --md-sys-color-surface-variant: #E8E6CC;
+    --md-sys-color-on-surface-variant: #3A4F38;
+    --md-sys-color-surface-dim: #E8E6CC;
+    --md-sys-color-surface-bright: #F8F6E0;
+    --md-sys-color-surface-container-lowest: #F8F6E0;
+    --md-sys-color-surface-container-low: #F4F2DA;
+    --md-sys-color-surface-container: #EFEDD2;
+    --md-sys-color-surface-container-high: #E8E6CC;
+    --md-sys-color-surface-container-highest: #E3E2C6;
+    --md-sys-color-outline: #7A8C6E;
+    --md-sys-color-outline-variant: #D8D5BC;
+    --md-sys-color-inverse-surface: #1C3A1F;
+    --md-sys-color-inverse-on-surface: #F4F2DA;
+    --md-sys-color-inverse-primary: #B7C5A5;
+    --md-sys-color-error: #8C3A28;
+    --md-sys-color-on-error: #F4F2DA;
+    --md-sys-color-error-container: #EAD3CB;
+    --md-sys-color-on-error-container: #8C3A28;
+
+    --md-outlined-text-field-container-color: transparent;
+    --md-outlined-text-field-outline-color: #D8D5BC;
+    --md-outlined-text-field-focus-outline-color: #1C3A1F;
+    --md-outlined-text-field-label-text-color: #7A8C6E;
+    --md-outlined-text-field-input-text-color: #1C3A1F;
+    --md-outlined-select-text-field-container-color: transparent;
+
+    --hy-status-good: #6B7F5C;
+    --hy-status-bad:  #8C3A28;
+
+    --hy-font-serif: 'Cormorant Garamond', 'Garamond', 'Times New Roman', serif;
+    --hy-ease-emph:  cubic-bezier(0.05, 0.7, 0.1, 1);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--hy-paper);
+    color: var(--hy-ink);
+    font-family: var(--hy-font-serif);
+    font-weight: 400;
+    font-size: 16px;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* Defensive: clip horizontal overflow at the document root so a
+       single offending child element can't turn the whole page into a
+       horizontally-scrolling mess. */
+    overflow-x: clip;
+  }
+
+  /* Outer wrapper — the "page of vellum" that everything sits on. */
+  .vellum-page {
+    min-height: 100vh;
+    background: var(--hy-paper);
+    color: var(--hy-ink);
+  }
+
+  /* Material Web text fields and selects are inline-flex by default
+     and won't stretch to fill a grid/flex column without an explicit
+     width. Global override (M9.4). */
+  md-outlined-text-field,
+  md-outlined-select {
+    width: 100%;
+  }
+
+  /* ----- Sticky status bar ----- */
+  .status-bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 10px 28px;
+    background: var(--hy-paper);
+    border-bottom: 1px solid var(--hy-hairline);
+  }
+  .status-bar .host {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--hy-font-serif);
+    font-size: 12px;
+    font-weight: 500;
+    font-variant-caps: small-caps;
+    letter-spacing: 0.08em;
+    color: var(--hy-sage);
+    white-space: nowrap;
+  }
+  .status-bar .host .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--hy-status-bad);
+    transition: background-color 200ms var(--hy-ease-emph);
+  }
+  .status-bar.connected .host .dot {
+    background: var(--hy-status-good);
+  }
+  .status-bar .now-showing {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    justify-content: center;
+  }
+  .status-bar .now-showing .label {
+    font-family: var(--hy-font-serif);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 13px;
+    font-variant-caps: small-caps;
+    letter-spacing: 0.05em;
+    color: var(--hy-sage);
+  }
+  .status-bar .now-showing .value {
+    font-family: var(--hy-font-serif);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 14px;
+    color: var(--hy-ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  .status-bar .spacer { flex: 0 0 auto; }
+  .status-bar md-icon-button {
+    --md-icon-button-icon-color: var(--hy-sage);
+    --md-icon-button-hover-icon-color: var(--hy-ink);
+  }
+
+  /* ----- Page header ----- */
+  .page-header {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 56px 28px 24px 28px;
+    text-align: center;
+    border-bottom: 1px solid var(--hy-hairline);
+  }
+  .page-header h1 {
+    margin: 0;
+    font-family: var(--hy-font-serif);
+    font-weight: 500;
+    font-size: clamp(36px, 5vw, 52px);
+    letter-spacing: 0.01em;
+    line-height: 1.05;
+    color: var(--hy-ink);
+    font-variant-caps: small-caps;
+  }
+  .page-header .ornament {
+    display: block;
+    margin: 10px auto 6px auto;
+    font-size: 16px;
+    color: var(--hy-sage);
+    letter-spacing: 0.4em;
+  }
+  .page-header .subtitle {
+    margin-top: 4px;
+    font-family: var(--hy-font-serif);
+    font-style: italic;
+    font-weight: 400;
+    font-size: 14px;
+    color: var(--hy-sage);
+  }
+
+  /* ----- Grid of sections ----- */
+  .grid {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 16px 28px 80px 28px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+  @media (min-width: 720px) {
+    .grid {
+      grid-template-columns: 1fr 1fr;
+      /* M9.7: Power section folded into Display, leaving three
+         sections. Packs spans both rows on the right because its
+         list grows taller than Display + Live combined. */
+      grid-template-areas:
+        "display packs"
+        "live    packs";
+      gap: 48px 56px;
+    }
+    .sect-display { grid-area: display; }
+    .sect-packs   { grid-area: packs; }
+    .sect-live    { grid-area: live; }
+  }
+  @media (min-width: 1100px) {
+    .grid {
+      grid-template-columns: 1fr 1.4fr 1fr;
+      grid-template-areas:
+        "display packs live";
+      gap: 56px 64px;
+    }
+  }
+
+  /* ----- Sections (no cards, only hairline dividers) ----- */
+  .section {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-width: 0;
+    border-top: 1px solid var(--hy-hairline);
+    padding-top: 24px;
+  }
+  .section .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  .section h2 {
+    margin: 0;
+    font-family: var(--hy-font-serif);
+    font-weight: 500;
+    font-size: 20px;
+    font-variant-caps: small-caps;
+    letter-spacing: 0.08em;
+    color: var(--hy-ink);
+  }
+  .section h2 .glyph {
+    display: inline-block;
+    margin-right: 10px;
+    color: var(--hy-sage);
+    font-variant-caps: normal;
+    font-size: 14px;
+    vertical-align: baseline;
+  }
+
+  /* ----- Form rows ----- */
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .row.between { justify-content: space-between; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .grow { flex: 1; min-width: 0; }
+  md-slider { flex: 1; }
+  .actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  /* Display actions row: screen buttons on the left, save on the right.
+     The spacer pushes Save away from the screen pair so the visual
+     hierarchy reads left-to-right: "do once" → "do once" → "save". */
+  .actions .spacer { flex: 1 1 auto; min-width: 8px; }
+  /* On phone widths the three buttons can't fit on one line (M9.8). */
+  @media (max-width: 600px) {
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .actions .spacer { display: none; }
+    .actions md-filled-tonal-button#save-btn {
+      grid-column: 1 / -1;
+    }
+  }
+  .field-label {
+    font-family: var(--hy-font-serif);
+    font-size: 13px;
+    font-weight: 500;
+    font-variant-caps: small-caps;
+    letter-spacing: 0.08em;
+    color: var(--hy-sage);
+  }
+  .muted {
+    font-family: var(--hy-font-serif);
+    font-size: 13px;
+    font-style: italic;
+    color: var(--hy-sage);
+  }
+  .brightness-row {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+  }
+  .brightness-value {
+    font-family: var(--hy-font-serif);
+    font-style: italic;
+    font-weight: 500;
+    font-size: 20px;
+    min-width: 64px;
+    text-align: right;
+    color: var(--hy-ink);
+    transition: color 200ms var(--hy-ease-emph);
+  }
+  .brightness-value.is-auto {
+    font-family: var(--hy-font-serif);
+    font-style: italic;
+    font-weight: 500;
+    font-size: 20px;
+    letter-spacing: 0.02em;
+    color: var(--hy-sage-bright);
+  }
+
+  /* ----- Live updates ----- */
+  .conn-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .conn-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    background: transparent;
+    color: var(--hy-ink);
+    font-family: var(--hy-font-serif);
+    font-size: 13px;
+    font-variant-caps: small-caps;
+    letter-spacing: 0.08em;
+  }
+  .conn-pill .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--hy-status-bad);
+    transition: background-color 200ms var(--hy-ease-emph);
+  }
+  .conn-pill.connected .dot { background: var(--hy-status-good); }
+  .retry-hint {
+    font-family: var(--hy-font-serif);
+    font-style: italic;
+    font-size: 12px;
+    color: var(--hy-sage);
+  }
+  .log {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    background: transparent;
+    border: 1px solid var(--hy-hairline);
+    border-radius: 0;
+    padding: 14px 16px;
+    max-height: 180px;
+    overflow: auto;
+    color: var(--hy-ink-soft);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .log.empty {
+    font-family: var(--hy-font-serif);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--hy-sage);
+  }
+
+  /* ----- Packs ----- */
+  .upload-form {
+    display: grid;
+    grid-template-columns: 1fr 140px;
+    gap: 14px;
+  }
+  @media (max-width: 520px) {
+    .upload-form { grid-template-columns: 1fr; }
+  }
+  .file-input-wrap {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 1px dashed var(--hy-hairline);
+    border-radius: 0;
+    background: transparent;
+    color: var(--hy-sage);
+    font-family: var(--hy-font-serif);
+    font-style: italic;
+    font-size: 14px;
+    cursor: pointer;
+    min-width: 0;
+  }
+  .file-input-wrap:hover {
+    background: var(--hy-paper);
+    border-color: var(--hy-sage);
+    color: var(--hy-ink);
+  }
+  .file-input-wrap md-icon {
+    flex: 0 0 auto;
+    color: var(--hy-sage);
+  }
+  .file-input-wrap .file-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Native input hidden; M9.4 visually-hidden pattern. */
+  .file-input-wrap input[type="file"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+  }
+  md-list#pack-list {
+    --md-list-container-color: transparent;
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    overflow: visible;
+    border-top: 1px solid var(--hy-hairline);
+    border-bottom: 1px solid var(--hy-hairline);
+  }
+  md-list#pack-list md-list-item {
+    --md-list-item-container-color: transparent;
+    --md-list-item-label-text-color: var(--hy-ink);
+    --md-list-item-supporting-text-color: var(--hy-sage);
+    --md-list-item-label-text-font: var(--hy-font-serif);
+    --md-list-item-supporting-text-font: var(--hy-font-serif);
+    position: relative;
+  }
+  /* Ornamental glyph divider between rows via ::before. */
+  md-list#pack-list md-list-item + md-list-item::before {
+    content: '\2726';
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: var(--hy-sage);
+    font-size: 11px;
+    background: var(--hy-paper);
+    padding: 0 10px;
+    pointer-events: none;
+  }
+  md-list#pack-list md-list-item .pack-version {
+    font-style: italic;
+    font-family: var(--hy-font-serif);
+  }
+  md-list#pack-list md-icon-button {
+    --md-icon-button-icon-color: var(--hy-sage);
+    --md-icon-button-hover-icon-color: var(--hy-ink);
+  }
+  .pack-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 32px 16px;
+    border: 1px dashed var(--hy-hairline);
+    border-radius: 0;
+    color: var(--hy-sage);
+    background: transparent;
+    font-family: var(--hy-font-serif);
+    font-style: italic;
+  }
+  .pack-empty[hidden],
+  md-list[hidden] {
+    display: none !important;
+  }
+  .pack-empty md-icon {
+    font-size: 26px;
+    --md-icon-size: 26px;
+    opacity: 0.7;
+  }
+  .pack-empty .pack-empty-text {
+    font-size: 14px;
+    font-weight: 400;
+  }
+
+  /* ----- Toast — small slip, not a Material snackbar ----- */
+  .toast {
+    position: fixed;
+    right: 28px;
+    bottom: 28px;
+    min-width: 200px;
+    max-width: calc(100vw - 56px);
+    background: var(--hy-paper);
+    color: var(--hy-ink);
+    border: 1px solid var(--hy-hairline);
+    border-radius: 0;
+    padding: 12px 20px 12px 16px;
+    font-family: var(--hy-font-serif);
+    font-style: italic;
+    font-size: 14px;
+    box-shadow: 2px 3px 0 rgba(28, 58, 31, 0.08),
+                4px 6px 12px rgba(28, 58, 31, 0.10);
+    opacity: 0;
+    transform: translateY(16px);
+    pointer-events: none;
+    transition: opacity 300ms var(--hy-ease-emph),
+                transform 300ms var(--hy-ease-emph);
+    z-index: 1000;
+  }
+  .toast::before {
+    content: '\2726';
+    display: inline-block;
+    margin-right: 8px;
+    color: var(--hy-sage);
+    font-style: normal;
+    font-size: 11px;
+    vertical-align: middle;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .toast.error {
+    color: var(--hy-rust);
+    border-color: var(--hy-rust);
+  }
+  .toast.error::before {
+    color: var(--hy-rust);
+  }
+  @media (max-width: 520px) {
+    .toast {
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+    }
+  }
+
+  /* ----- Stale / reload inline affordance — italic parenthetical ----- */
+  .stale-reload {
+    display: none;
+    font-family: var(--hy-font-serif);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--hy-rust);
+    background: transparent;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .stale-reload:hover {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+  .stale-reload.show { display: inline; }
+
+  /* Tonal button color tweak — sage palette rather than brand stickers. */
+  md-filled-tonal-button {
+    --md-filled-tonal-button-container-color: var(--hy-paper);
+    --md-filled-tonal-button-label-text-color: var(--hy-ink);
+    --md-filled-tonal-button-label-text-font: var(--hy-font-serif);
+    --md-filled-tonal-button-hover-container-color: #E3E2C6;
+  }
+  md-outlined-button {
+    --md-outlined-button-label-text-color: var(--hy-ink);
+    --md-outlined-button-outline-color: var(--hy-hairline);
+    --md-outlined-button-label-text-font: var(--hy-font-serif);
+  }
+</style>
+</head>
+<body>
+<div class="vellum-page">
+<div id="status-bar" class="status-bar">
+  <div class="host">
+    <span class="dot" id="conn-dot"></span>
+    <span id="status-host">&mdash;</span>
+  </div>
+  <div class="now-showing">
+    <span class="label">Now showing</span>
+    <span class="value" id="status-content" title="">&mdash;</span>
+  </div>
+  <div class="spacer">
+    <md-icon-button id="token-icon-btn" aria-label="Set operator token" title="Set operator token">
+      <md-icon>key</md-icon>
+    </md-icon-button>
+  </div>
+</div>
+
+<header class="page-header">
+  <h1>Hyacinth Operator</h1>
+  <span class="ornament">✦&nbsp;❦&nbsp;✦</span>
+  <div class="subtitle" id="server-sub">&mdash;</div>
+</header>
+
+<main class="grid">
+  <section class="section sect-display" aria-labelledby="h-display">
+    <div class="section-head">
+      <h2 id="h-display"><span class="glyph">&#10030;</span>Display</h2>
+      <button type="button" id="reload-btn" class="stale-reload">(server changed &mdash; reload?)</button>
+    </div>
+    <md-outlined-text-field id="content-field" label="Content URL" type="url"></md-outlined-text-field>
+    <div class="col">
+      <div class="row between">
+        <span class="field-label">Brightness</span>
+        <div class="row" style="gap:8px;">
+          <span class="muted">Auto</span>
+          <md-switch id="auto-switch"></md-switch>
+        </div>
+      </div>
+      <div class="brightness-row">
+        <md-slider id="brightness-slider" min="0" max="100" step="1" labeled value="50"></md-slider>
+        <span class="brightness-value" id="brightness-value">50</span>
+      </div>
+    </div>
+    <md-outlined-select id="timeout-select" label="Screen Timeout">
+      <md-select-option value="always-on"><div slot="headline">Always on</div></md-select-option>
+      <md-select-option value="30s"><div slot="headline">30 seconds</div></md-select-option>
+      <md-select-option value="1m"><div slot="headline">1 minute</div></md-select-option>
+      <md-select-option value="5m"><div slot="headline">5 minutes</div></md-select-option>
+      <md-select-option value="10m"><div slot="headline">10 minutes</div></md-select-option>
+      <md-select-option value="30m"><div slot="headline">30 minutes</div></md-select-option>
+    </md-outlined-select>
+    <div class="actions">
+      <md-outlined-button id="screen-off-btn" title="Imperative — fires once, not persisted">
+        <md-icon slot="icon">dark_mode</md-icon>
+        Screen off
+      </md-outlined-button>
+      <md-outlined-button id="screen-on-btn" title="Imperative — fires once, not persisted">
+        <md-icon slot="icon">light_mode</md-icon>
+        Screen on
+      </md-outlined-button>
+      <span class="spacer"></span>
+      <md-filled-tonal-button id="save-btn">Save</md-filled-tonal-button>
+    </div>
+  </section>
+
+  <section class="section sect-packs" aria-labelledby="h-packs">
+    <div class="section-head">
+      <h2 id="h-packs"><span class="glyph">&#10087;</span>Packs</h2>
+    </div>
+    <div class="upload-form">
+      <md-outlined-text-field id="pack-id" label="Pack ID (slug)"></md-outlined-text-field>
+      <label class="file-input-wrap">
+        <md-icon>upload_file</md-icon>
+        <span class="file-label" id="pack-file-label">Choose a file (zip or image)</span>
+        <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif" />
+      </label>
+    </div>
+    <md-list id="pack-list"></md-list>
+    <div id="pack-empty" class="pack-empty" hidden>
+      <md-icon>inventory_2</md-icon>
+      <div class="pack-empty-text">No packs uploaded yet</div>
+    </div>
+  </section>
+
+  <section class="section sect-live" aria-labelledby="h-live">
+    <div class="section-head">
+      <h2 id="h-live"><span class="glyph">&#10089;</span>Live updates</h2>
+    </div>
+    <div class="conn-row">
+      <span class="conn-pill" id="conn-pill"><span class="dot"></span><span id="conn-text">disconnected</span></span>
+      <span class="retry-hint" id="ws-retry"></span>
+    </div>
+    <div class="log empty" id="log">Waiting for the first config push&hellip;</div>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script type="module">
+  // ----- DOM handles -----
+  const $ = (id) => document.getElementById(id);
+  const statusBar    = $('status-bar');
+  const statusHost   = $('status-host');
+  const statusContent= $('status-content');
+  const contentField = $('content-field');
+  const autoSwitch   = $('auto-switch');
+  const slider       = $('brightness-slider');
+  const brightnessValue = $('brightness-value');
+  const timeoutSel   = $('timeout-select');
+  const saveBtn      = $('save-btn');
+  const screenOffBtn = $('screen-off-btn');
+  const screenOnBtn  = $('screen-on-btn');
+  const connPill     = $('conn-pill');
+  const connText     = $('conn-text');
+  const wsRetry      = $('ws-retry');
+  const logEl        = $('log');
+  const toastEl      = $('toast');
+  const reloadBtn    = $('reload-btn');
+  const tokenBtn     = $('token-icon-btn');
+
+  // Host text appears in both the sticky bar and the header subtitle.
+  statusHost.textContent = location.host;
+  $('server-sub').textContent = location.host;
+
+  // ----- Operator auth token (M8) -----
+  // Stored in localStorage and attached as Authorization: Bearer to every
+  // mutating fetch. Read fetches go without — the server only enforces auth
+  // on mutating verbs.
+  const TOKEN_KEY = 'hyacinth.token';
+  function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
+  function setToken(v) {
+    if (v) { localStorage.setItem(TOKEN_KEY, v); }
+    else { localStorage.removeItem(TOKEN_KEY); }
+  }
+  function authHeaders(extra) {
+    const t = getToken();
+    const h = Object.assign({}, extra || {});
+    if (t) h['Authorization'] = 'Bearer ' + t;
+    return h;
+  }
+  tokenBtn.addEventListener('click', () => {
+    const cur = getToken();
+    const next = window.prompt(
+      'Operator token (leave blank to clear):',
+      cur,
+    );
+    if (next === null) return;
+    setToken(next.trim());
+    toast(next.trim() ? 'Token saved' : 'Token cleared');
+  });
+
+  // ----- State -----
+  let dirty = false;        // user has edited the form since last load
+  let lastServerCfg = null; // most recent config_update payload
+  let recentEvents = [];    // last 5 envelopes for the log
+  let backoffMs = 1000;
+  const BACKOFF_CAP = 10000;
+
+  // ----- Form helpers -----
+  function updateBrightnessValueLabel() {
+    if (autoSwitch.selected) {
+      brightnessValue.textContent = 'auto';
+      brightnessValue.classList.add('is-auto');
+    } else {
+      brightnessValue.textContent = String(slider.value);
+      brightnessValue.classList.remove('is-auto');
+    }
+  }
+
+  function updateStatusContent(url) {
+    const v = url || '';
+    statusContent.textContent = v || '\u2014';
+    statusContent.title = v;
+  }
+
+  function applyConfigToForm(cfg) {
+    contentField.value = cfg.content || '';
+    updateStatusContent(cfg.content);
+    const b = cfg.brightness;
+    if (b === 'auto' || b === '"auto"') {
+      autoSwitch.selected = true;
+      slider.disabled = true;
+    } else {
+      autoSwitch.selected = false;
+      slider.disabled = false;
+      const n = typeof b === 'number' ? b : parseInt(b, 10);
+      if (!Number.isNaN(n)) slider.value = n;
+    }
+    timeoutSel.value = (typeof cfg.screenTimeout === 'string')
+      ? cfg.screenTimeout
+      : 'always-on';
+    dirty = false;
+    reloadBtn.classList.remove('show');
+    updateBrightnessValueLabel();
+  }
+
+  function buildPayload() {
+    const brightness = autoSwitch.selected ? 'auto' : Number(slider.value);
+    return {
+      content: contentField.value,
+      brightness,
+      screenTimeout: timeoutSel.value || 'always-on',
+    };
+  }
+
+  function markDirty() { dirty = true; }
+  contentField.addEventListener('input', () => {
+    markDirty();
+    updateStatusContent(contentField.value);
+  });
+  slider.addEventListener('input', () => {
+    markDirty();
+    updateBrightnessValueLabel();
+  });
+  autoSwitch.addEventListener('change', () => {
+    slider.disabled = autoSwitch.selected;
+    markDirty();
+    updateBrightnessValueLabel();
+  });
+  timeoutSel.addEventListener('change', markDirty);
+
+  // ----- Imperative screen on/off (M9.1) -----
+  async function sendScreen(action) {
+    try {
+      const r = await fetch('/screen', {
+        method: 'POST',
+        headers: authHeaders({'Content-Type': 'application/json'}),
+        body: JSON.stringify({action}),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      toast('Screen ' + action + ' sent');
+    } catch (e) {
+      toast('Failed: ' + e.message, true);
+    }
+  }
+  screenOffBtn.addEventListener('click', () => sendScreen('off'));
+  screenOnBtn.addEventListener('click', () => sendScreen('on'));
+
+  // ----- Toast -----
+  let toastTimer = null;
+  function toast(msg, isError) {
+    toastEl.textContent = msg;
+    toastEl.classList.toggle('error', !!isError);
+    toastEl.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 3000);
+  }
+
+  // ----- Save -----
+  // Extracted into a function so the pack-row "Use as content" action
+  // can call it directly to push the new content URL without making
+  // the operator click Save as a second step.
+  async function saveConfig() {
+    saveBtn.disabled = true;
+    try {
+      const r = await fetch('/config', {
+        method: 'PUT',
+        headers: authHeaders({'Content-Type': 'application/json'}),
+        body: JSON.stringify(buildPayload()),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const stored = await r.json();
+      lastServerCfg = stored;
+      applyConfigToForm(stored); // resets dirty
+      toast('Saved');
+      return true;
+    } catch (e) {
+      toast('Save failed: ' + e.message, true);
+      return false;
+    } finally {
+      saveBtn.disabled = false;
+    }
+  }
+  saveBtn.addEventListener('click', saveConfig);
+
+  // ----- Initial GET /config -----
+  async function loadConfig() {
+    try {
+      const r = await fetch('/config');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const cfg = await r.json();
+      lastServerCfg = cfg;
+      applyConfigToForm(cfg);
+    } catch (e) {
+      toast('Failed to load config: ' + e.message, true);
+    }
+  }
+
+  // ----- WebSocket with reconnect -----
+  let ws = null;
+  function setConn(connected, retrying) {
+    if (connected) {
+      connPill.classList.add('connected');
+      statusBar.classList.add('connected');
+      connText.textContent = 'connected';
+      wsRetry.textContent = '';
+    } else {
+      connPill.classList.remove('connected');
+      statusBar.classList.remove('connected');
+      connText.textContent = 'disconnected';
+      wsRetry.textContent = retrying ? '(retrying\u2026)' : '';
+    }
+  }
+
+  function pushLog(env) {
+    recentEvents.unshift(env);
+    if (recentEvents.length > 5) recentEvents.length = 5;
+    logEl.classList.remove('empty');
+    logEl.textContent = recentEvents
+      .map((e) => JSON.stringify(e).slice(0, 240))
+      .join('\n');
+  }
+
+  function connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = proto + '//' + location.host + '/ws';
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      scheduleReconnect();
+      return;
+    }
+    ws.addEventListener('open', () => {
+      backoffMs = 1000;
+      setConn(true, false);
+    });
+    ws.addEventListener('close', () => {
+      setConn(false, true);
+      scheduleReconnect();
+    });
+    ws.addEventListener('error', () => { /* close handler will fire */ });
+    ws.addEventListener('message', (ev) => {
+      let env;
+      try { env = JSON.parse(ev.data); } catch { return; }
+      pushLog(env);
+      if (env.type === 'config_update' && env.config) {
+        lastServerCfg = env.config;
+        if (!dirty) {
+          applyConfigToForm(env.config);
+        } else {
+          reloadBtn.classList.add('show');
+          // Don't clobber the user's edits, but keep the sticky bar honest.
+          updateStatusContent(env.config.content);
+        }
+      }
+    });
+  }
+
+  function scheduleReconnect() {
+    setTimeout(() => {
+      backoffMs = Math.min(BACKOFF_CAP, backoffMs * 2);
+      connectWS();
+    }, backoffMs);
+  }
+
+  reloadBtn.addEventListener('click', () => {
+    if (lastServerCfg) applyConfigToForm(lastServerCfg);
+  });
+
+  // ----- Resource Packs (M5) -----
+  const packIdField   = $('pack-id');
+  // packTypeSel removed in M9.3 — type is now sniffed from the
+  // uploaded file's MIME / extension via packTypeFromFile().
+  const packFileInput = $('pack-file');
+  const packFileLabel = $('pack-file-label');
+  // packUploadBtn removed in M9.5 — uploads fire on file selection.
+  const packListEl    = $('pack-list');
+  const packEmptyEl   = $('pack-empty');
+
+  // M9.5: picking a file triggers the upload immediately. The label
+  // is updated transiently inside uploadPack() (Uploading… → reset).
+  // The native file input is hidden via CSS so we manage all of its
+  // user-facing affordance ourselves.
+  packFileInput.addEventListener('change', function() {
+    const f = packFileInput.files && packFileInput.files[0];
+    if (!f) return;
+    uploadPack(f);
+  });
+
+  function humanSize(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KiB';
+    return (n / (1024 * 1024)).toFixed(2) + ' MiB';
+  }
+
+  function packSchemeUrl(p) {
+    // Zip packs always have an index.html entry point at the archive
+    // root; image packs serve their single content file by name.
+    const path = p.type === 'zip' ? 'index.html' : p.filename;
+    return 'hyacinth://pack/' + p.id + '/' + path;
+  }
+
+  // M9.5: clicking the play_arrow on a pack row sets the content URL
+  // AND immediately publishes the config — no second step. Same goes
+  // for any other "promote this thing to live" action we might add.
+  async function setContentToPackUrl(p) {
+    contentField.value = packSchemeUrl(p);
+    updateStatusContent(contentField.value);
+    const ok = await saveConfig();
+    if (ok) toast('Now showing ' + p.id);
+  }
+
+  async function deletePack(id) {
+    if (!confirm('Delete pack "' + id + '"?')) return;
+    try {
+      const r = await fetch('/packs/' + encodeURIComponent(id), {method: 'DELETE', headers: authHeaders()});
+      if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
+      toast('Deleted ' + id);
+      loadPackList();
+    } catch (e) {
+      toast('Delete failed: ' + e.message, true);
+    }
+  }
+
+  async function loadPackList() {
+    try {
+      const r = await fetch('/packs');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const arr = await r.json();
+      renderPackList(arr || []);
+    } catch (e) {
+      toast('Pack list failed: ' + e.message, true);
+    }
+  }
+
+  function makeIconButton(iconName, label, onClick) {
+    const btn = document.createElement('md-icon-button');
+    btn.setAttribute('aria-label', label);
+    btn.setAttribute('title', label);
+    const icon = document.createElement('md-icon');
+    icon.textContent = iconName;
+    btn.appendChild(icon);
+    btn.addEventListener('click', onClick);
+    return btn;
+  }
+
+  function renderPackList(packs) {
+    packListEl.innerHTML = '';
+    if (packs.length === 0) {
+      packListEl.hidden = true;
+      packEmptyEl.hidden = false;
+      return;
+    }
+    packListEl.hidden = false;
+    packEmptyEl.hidden = true;
+    for (const p of packs) {
+      const item = document.createElement('md-list-item');
+
+      const leading = document.createElement('div');
+      leading.setAttribute('slot', 'start');
+      const leadingIcon = document.createElement('md-icon');
+      leadingIcon.textContent = p.type === 'zip' ? 'folder_zip' : 'image';
+      leading.appendChild(leadingIcon);
+
+      const h = document.createElement('div');
+      h.setAttribute('slot', 'headline');
+      h.textContent = p.id;
+
+      const s = document.createElement('div');
+      s.setAttribute('slot', 'supporting-text');
+      // Italic version numerals per M14 — the version is the herbarium
+      // index entry's specimen number.
+      const ver = document.createElement('span');
+      ver.className = 'pack-version';
+      ver.textContent = 'v' + p.version;
+      s.appendChild(ver);
+      s.appendChild(document.createTextNode('  \u00b7  ' + humanSize(p.size)));
+
+      const trailing = document.createElement('div');
+      trailing.setAttribute('slot', 'end');
+      trailing.style.display = 'flex';
+      trailing.style.gap = '4px';
+      trailing.appendChild(makeIconButton('play_arrow', 'Use as content', () => setContentToPackUrl(p)));
+      trailing.appendChild(makeIconButton('delete', 'Delete pack', () => deletePack(p.id)));
+
+      item.appendChild(leading);
+      item.appendChild(h);
+      item.appendChild(s);
+      item.appendChild(trailing);
+      packListEl.appendChild(item);
+    }
+  }
+
+  // M9.3: derive the pack type from the file itself instead of
+  // making the operator pick it. We honor the file's MIME first,
+  // fall back to the extension.
+  function packTypeFromFile(file) {
+    var name = (file.name || '').toLowerCase();
+    var mime = (file.type || '').toLowerCase();
+    if (mime === 'application/zip' || name.endsWith('.zip')) return 'zip';
+    if (mime === 'image/png' || name.endsWith('.png')) return 'png';
+    if (mime === 'image/jpeg' || name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'jpg';
+    if (mime === 'image/webp' || name.endsWith('.webp')) return 'webp';
+    if (mime === 'image/gif' || name.endsWith('.gif')) return 'gif';
+    return null;
+  }
+
+  // M9.5: upload fires immediately on file selection — no separate
+  // Upload button. The Pack ID must already be filled; if not, we
+  // toast an error and clear the file selection so the user can
+  // re-pick after entering an id.
+  let uploading = false;
+  async function uploadPack(file) {
+    if (uploading) return;
+    const id = (packIdField.value || '').trim();
+    if (!id) {
+      toast('Enter a pack id first', true);
+      packFileInput.value = '';
+      packFileLabel.textContent = 'Choose a file (zip or image)';
+      return;
+    }
+    const type = packTypeFromFile(file);
+    if (!type) {
+      toast('Unsupported file type — pick a zip or an image', true);
+      packFileInput.value = '';
+      packFileLabel.textContent = 'Choose a file (zip or image)';
+      return;
+    }
+    uploading = true;
+    packFileLabel.textContent = 'Uploading ' + file.name + '\u2026';
+    try {
+      const fd = new FormData();
+      fd.append('id', id);
+      fd.append('type', type);
+      fd.append('file', file);
+      const r = await fetch('/packs', {method: 'POST', body: fd, headers: authHeaders()});
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()));
+      toast('Uploaded ' + id);
+      packIdField.value = '';
+      packFileInput.value = '';
+      packFileLabel.textContent = 'Choose a file (zip or image)';
+      loadPackList();
+    } catch (e) {
+      toast('Upload failed: ' + e.message, true);
+      packFileLabel.textContent = 'Choose a file (zip or image)';
+    } finally {
+      uploading = false;
+    }
+  }
+
+  // ----- Boot -----
+  loadConfig().then(loadPackList).then(connectWS);
+</script>
+</body>
+</html>

@@ -168,7 +168,7 @@ func TestGetIndexReturnsHTML(t *testing.T) {
 		"<title>Hyacinth Operator</title>",
 		`<script type="importmap">`,
 		"@material/web/",
-		"md-filled-button",
+		"md-filled-tonal-button",
 		"md-outlined-text-field",
 		"md-slider",
 		"md-switch",
@@ -176,18 +176,22 @@ func TestGetIndexReturnsHTML(t *testing.T) {
 		"md-list",
 		"--md-sys-color-primary",
 		"fetch('/config'",
-		// M9.2 redesign pins: sticky status bar and the display-face font.
+		// M9.2 redesign pins: sticky status bar.
 		`id="status-bar"`,
-		"Fraunces",
+		// M14 herbarium pins: Cormorant Garamond, the ✦ ornament glyph,
+		// and the stable vellum-page wrapper class.
+		"Cormorant Garamond",
+		"\u2726",
+		"vellum-page",
 	}
 	for _, m := range musts {
 		if !strings.Contains(body, m) {
 			t.Errorf("index HTML missing %q", m)
 		}
 	}
-	// Light + dark token blocks: --md-sys-color-primary defined twice.
-	if c := strings.Count(body, "--md-sys-color-primary:"); c < 2 {
-		t.Errorf("--md-sys-color-primary defined %d times, want >= 2 (light+dark)", c)
+	// M14 regression: dark mode was deliberately removed — paper is paper.
+	if strings.Contains(body, "@media (prefers-color-scheme: dark)") {
+		t.Errorf("index HTML still contains a dark-mode media query; M14 removed it")
 	}
 }
 
