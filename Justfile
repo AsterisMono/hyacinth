@@ -39,3 +39,27 @@ install: apk-debug
 # Install the release APK on a connected device via adb
 apk-install: apk
     adb install -r client/build/app/outputs/flutter-apk/app-release.apk
+
+# ----- Hyacinth content packs (see .claude/skills/hyacinth-pack/SKILL.md)
+# Requires pnpm — install via `npm install -g pnpm` or `corepack enable`
+# (recommended: corepack, ships with Node 16.13+).
+# Lazy install: node_modules is created on first dev/build, reused thereafter.
+# Override server + auth via env: HYACINTH_SERVER, HYACINTH_TOKEN.
+
+pack-dev id:
+    @cd packs/{{id}} && [ -d node_modules ] || pnpm install --silent
+    cd packs/{{id}} && pnpm exec vite
+
+pack-build id:
+    @cd packs/{{id}} && [ -d node_modules ] || pnpm install --silent
+    cd packs/{{id}} && pnpm exec vite build
+
+pack-upload id: (pack-build id)
+    cd packs/{{id}}/dist && zip -qr ../pack.zip .
+    curl -fsS -X POST \
+        -H "Authorization: Bearer ${HYACINTH_TOKEN:-}" \
+        -F "id={{id}}" -F "type=zip" -F "file=@packs/{{id}}/pack.zip" \
+        "${HYACINTH_SERVER:-http://localhost:8080}/packs"
+    @echo ""
+    @echo "✦ Uploaded {{id}} to ${HYACINTH_SERVER:-http://localhost:8080}"
+    @echo "  Set the operator UI's content URL to: hyacinth://pack/{{id}}/index.html"

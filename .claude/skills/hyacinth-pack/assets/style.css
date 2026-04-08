@@ -1,0 +1,75 @@
+/* Hyacinth pack — herbarium starter.
+ *
+ * Cream paper, forest-green ink, generous negative space. The palette and
+ * typography come from the project's Project Hyacinth reference card; the
+ * content packs share a deliberately distinct aesthetic from the operator
+ * UI (Material You purple) so the two surfaces feel like different rooms
+ * in the same house: interface vs art.
+ *
+ * Tweak freely — this is a starter, not a brand guide. */
+
+:root {
+  --hp-paper: #F2F1DD;
+  --hp-ink: #1F3A20;
+  --hp-sage: #7E9072;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--hp-paper);
+  color: var(--hp-ink);
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.bag-canvas {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 48px;
+}
+
+/* Italic Cormorant numerals — calligraphic, not clinical. tabular-nums
+ * keeps the digits from jittering as the minutes tick. */
+.clock {
+  font-size: clamp(72px, 12vw, 144px);
+  font-style: italic;
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  margin: 0;
+  color: var(--hp-ink);
+}
+
+/* The pack id rendered in OpenType small caps — Chrome supports
+ * `font-variant-caps: small-caps` natively against the Cormorant face,
+ * which gives the herbarium-card "spaced small caps" look without
+ * needing a separate small-caps font file. */
+.slug {
+  font-size: 16px;
+  font-weight: 500;
+  font-variant-caps: small-caps;
+  letter-spacing: 0.32em;
+  color: var(--hp-sage);
+  margin: 0;
+}
+
+.flourish {
+  font-size: 14px;
+  color: var(--hp-sage);
+  letter-spacing: 0.4em;
+  margin-top: 8px;
+  user-select: none;
+}
