@@ -7,6 +7,7 @@ import '../config/config_store.dart';
 import '../permissions/perm_manager.dart';
 import '../resource_pack/wifi_guard.dart';
 import '../system/root_helper.dart';
+import '../system/screen_power.dart';
 import '../system/secure_settings.dart';
 
 /// Thrown by a `Fix` callback when the underlying root grant fails.
@@ -70,12 +71,14 @@ class HealthCheck {
     WifiGuard? wifiGuard,
     SecureSettings? secureSettings,
     RootHelper? rootHelper,
+    ScreenPower? screenPower,
   })  : _store = store ?? ConfigStore(),
         _perms = perms ?? const PermManager(),
         _http = httpClient ?? http.Client(),
         _wifiGuard = wifiGuard ?? WifiGuard(),
         _secureSettings = secureSettings ?? SecureSettings(),
-        _rootHelper = rootHelper ?? RootHelper();
+        _rootHelper = rootHelper ?? RootHelper(),
+        _screenPower = screenPower ?? ScreenPower();
 
   static const Duration _pingTimeout = Duration(seconds: 3);
 
@@ -85,6 +88,7 @@ class HealthCheck {
   final WifiGuard _wifiGuard;
   final SecureSettings _secureSettings;
   final RootHelper _rootHelper;
+  final ScreenPower _screenPower;
 
   Future<HealthReport> run() async {
     final results = <CheckResult>[];
@@ -112,8 +116,33 @@ class HealthCheck {
     results.add(await _wifiCheck());
     results.add(await _secureSettingsCheck());
     results.add(await _rootCheck());
+    results.add(await _screenPowerCheck());
 
     return HealthReport(results);
+  }
+
+  /// M9 — screen-off capability row. Green if either cached root is
+  /// available OR the Device Admin receiver is active. Red otherwise;
+  /// the Fix button fires the system Add-device-admin dialog.
+  Future<CheckResult> _screenPowerCheck() async {
+    final rootOk = await _store.getRootAvailable();
+    final adminOk = await _screenPower.isAdminActive();
+    if (rootOk || adminOk) {
+      return CheckResult(
+        name: 'Screen-off capability',
+        status: CheckStatus.ok,
+        message: rootOk ? 'Root available' : 'Device Admin active',
+      );
+    }
+    return CheckResult(
+      name: 'Screen-off capability',
+      status: CheckStatus.fail,
+      message: 'Neither root nor Device Admin is available — '
+          'screen-off commands will fail.',
+      fix: () async {
+        await _screenPower.requestAdmin();
+      },
+    );
   }
 
   /// M8.1 — `WRITE_SECURE_SETTINGS` row. Fix button calls

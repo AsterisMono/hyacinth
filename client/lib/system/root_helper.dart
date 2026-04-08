@@ -51,6 +51,13 @@ class RootHelper {
 
   Future<bool> whitelistBatteryOpt() => _invokeBool('whitelistBatteryOpt');
 
+  /// M9 — root-tier screen off (`input keyevent 223`). The orchestration
+  /// lives natively in `screen_power`; Dart tests exercise this directly.
+  Future<bool> sleepScreen() => _invokeBool('sleepScreen');
+
+  /// M9 — root-tier screen on (`input keyevent 224`).
+  Future<bool> wakeScreen() => _invokeBool('wakeScreen');
+
   Future<bool> _invokeBool(String method) async {
     try {
       final result = await _channel.invokeMethod<bool>(method);

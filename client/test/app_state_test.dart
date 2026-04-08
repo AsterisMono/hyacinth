@@ -21,6 +21,7 @@ import 'package:hyacinth/resource_pack/pack_cache.dart';
 import 'package:hyacinth/resource_pack/pack_manager.dart';
 import 'package:hyacinth/resource_pack/pack_manifest.dart';
 import 'package:hyacinth/resource_pack/wifi_guard.dart';
+import 'package:hyacinth/system/screen_power.dart';
 import 'package:hyacinth/system/secure_settings.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -152,6 +153,20 @@ class _GrantedSecureSettings extends SecureSettings {
   Future<bool> hasPermission() async => true;
 }
 
+/// Fake [ScreenPower] for AppState tests. Reports Device Admin as active
+/// so the M9 "Screen-off capability" HealthCheck row is green and doesn't
+/// flip AppState into fallback.
+class _AdminActiveScreenPower implements ScreenPower {
+  @override
+  Future<bool> isInteractive() async => true;
+  @override
+  Future<bool> isAdminActive() async => true;
+  @override
+  Future<void> requestAdmin() async {}
+  @override
+  Future<String> apply(bool screenOn) async => 'admin';
+}
+
 HealthCheck _makeHealthCheck({required bool pingOk}) {
   final mock = MockClient((request) async {
     if (request.url.path.endsWith('/health')) {
@@ -164,6 +179,7 @@ HealthCheck _makeHealthCheck({required bool pingOk}) {
     perms: _GrantedPerms(),
     httpClient: mock,
     secureSettings: _GrantedSecureSettings(),
+    screenPower: _AdminActiveScreenPower(),
   );
 }
 
@@ -288,6 +304,7 @@ void main() {
       perms: _GrantedPerms(),
       httpClient: mock,
       secureSettings: _GrantedSecureSettings(),
+      screenPower: _AdminActiveScreenPower(),
     );
     final state = AppState(
       store: ConfigStore(),

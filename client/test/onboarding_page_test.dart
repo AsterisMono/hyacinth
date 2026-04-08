@@ -11,6 +11,7 @@ import 'package:hyacinth/onboarding/onboarding_page.dart';
 import 'package:hyacinth/permissions/perm_manager.dart';
 import 'package:hyacinth/config/config_model.dart';
 import 'package:hyacinth/system/root_helper.dart';
+import 'package:hyacinth/system/screen_power.dart';
 import 'package:hyacinth/system/secure_settings.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -61,6 +62,25 @@ class _GreenSecureSettings extends SecureSettings {
   Future<bool> hasPermission() async => true;
 }
 
+class _FakeScreenPower implements ScreenPower {
+  _FakeScreenPower({this.adminAfterRequest = true});
+  bool adminAfterRequest;
+  int requestAdminCalls = 0;
+  bool _activated = false;
+  @override
+  Future<bool> isInteractive() async => true;
+  @override
+  Future<bool> isAdminActive() async => _activated;
+  @override
+  Future<void> requestAdmin() async {
+    requestAdminCalls++;
+    _activated = adminAfterRequest;
+  }
+
+  @override
+  Future<String> apply(bool screenOn) async => 'admin';
+}
+
 class _FakeRootHelper extends RootHelper {
   _FakeRootHelper({
     this.summary = const RootGrantSummary(
@@ -88,6 +108,7 @@ HealthCheck _greenHealthCheck() => HealthCheck(
           MockClient((req) async => http.Response('{"ok":true}', 200)),
       secureSettings: _GreenSecureSettings(),
       rootHelper: _FakeRootHelper(),
+      screenPower: _FakeScreenPower(),
     );
 
 void main() {
@@ -132,6 +153,7 @@ void main() {
           perms: perms,
           store: store,
           root: _FakeRootHelper(),
+          screenPower: _FakeScreenPower(),
         ),
       ),
     );
@@ -144,6 +166,11 @@ void main() {
 
     // Step 2: root → Skip
     expect(find.text('Root access (optional)'), findsOneWidget);
+    await tester.tap(find.text('Skip'));
+    await tester.pumpAndSettle();
+
+    // Step 2.5: device admin → Skip (M9).
+    expect(find.text('Device admin (for screen-off)'), findsOneWidget);
     await tester.tap(find.text('Skip'));
     await tester.pumpAndSettle();
 
@@ -182,14 +209,17 @@ void main() {
           appState: state,
           perms: perms,
           root: _FakeRootHelper(),
+          screenPower: _FakeScreenPower(),
         ),
       ),
     );
     await tester.pump();
-    // Advance through Welcome → Root → Notifications.
+    // Advance through Welcome → Root → Device admin → Notifications.
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Skip')); // root
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Skip')); // device admin
     await tester.pumpAndSettle();
     await tester.tap(find.text('Grant'));
     await tester.pumpAndSettle();
@@ -211,6 +241,7 @@ void main() {
           appState: state,
           perms: _FakePerms(),
           root: _FakeRootHelper(),
+          screenPower: _FakeScreenPower(),
         ),
       ),
     );
@@ -249,14 +280,18 @@ void main() {
           perms: _FakePerms(),
           store: store,
           root: _FakeRootHelper(),
+          screenPower: _FakeScreenPower(),
         ),
       ),
     );
     await tester.pump();
-    // Skip to last step (Welcome → Root → Notifications → Battery → URL).
+    // Skip to last step (Welcome → Root → Device admin → Notifications →
+    // Battery → URL).
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Skip')); // root
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Skip')); // device admin
     await tester.pumpAndSettle();
     await tester.tap(find.text('Skip')); // notifications
     await tester.pumpAndSettle();
@@ -294,6 +329,7 @@ void main() {
           perms: perms,
           store: store,
           root: root,
+          screenPower: _FakeScreenPower(),
         ),
       ),
     );
@@ -318,7 +354,9 @@ void main() {
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
 
-    // Should jump straight to Server URL — notifications + battery skipped.
+    // Should jump straight to Server URL — device admin / notifications /
+    // battery all skipped because root landed everything.
+    expect(find.text('Device admin (for screen-off)'), findsNothing);
     expect(find.text('Notifications permission'), findsNothing);
     expect(find.text('Battery optimization exemption'), findsNothing);
     expect(find.text('Server URL'), findsWidgets);
@@ -346,6 +384,7 @@ void main() {
           perms: _FakePerms(),
           store: ConfigStore(),
           root: root,
+          screenPower: _FakeScreenPower(),
         ),
       ),
     );
@@ -357,6 +396,8 @@ void main() {
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
 
+    // Device admin step also skipped because root landed.
+    expect(find.text('Device admin (for screen-off)'), findsNothing);
     // Notifications must still be shown.
     expect(find.text('Notifications permission'), findsOneWidget);
     // But battery was granted via root → step is gone from the wizard.
@@ -369,7 +410,7 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('non-rooted path: probe runs, wizard advances to notifications',
+  testWidgets('non-rooted path: probe runs, wizard advances to device admin',
       (tester) async {
     final state = AppState();
     final root = _FakeRootHelper(); // default summary: all false
@@ -380,6 +421,7 @@ void main() {
           perms: _FakePerms(),
           store: ConfigStore(),
           root: root,
+          screenPower: _FakeScreenPower(),
         ),
       ),
     );
@@ -394,8 +436,8 @@ void main() {
 
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
-    // Notifications step is the next visible page.
-    expect(find.text('Notifications permission'), findsOneWidget);
+    // Device admin step is now the next visible page (M9).
+    expect(find.text('Device admin (for screen-off)'), findsOneWidget);
     state.dispose();
   });
 
@@ -409,6 +451,7 @@ void main() {
           perms: _FakePerms(),
           store: ConfigStore(),
           root: root,
+          screenPower: _FakeScreenPower(),
         ),
       ),
     );
@@ -419,7 +462,76 @@ void main() {
     await tester.tap(find.text('Skip'));
     await tester.pumpAndSettle();
     expect(root.autoGrantCalls, 0);
+    // Lands on device admin step (M9).
+    expect(find.text('Device admin (for screen-off)'), findsOneWidget);
+    state.dispose();
+  });
+
+  // ── M9: device admin step ──────────────────────────────────────────────
+
+  testWidgets('device admin Grant → admin active → advances to notifications',
+      (tester) async {
+    final state = AppState();
+    final sp = _FakeScreenPower(adminAfterRequest: true);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OnboardingPage(
+          appState: state,
+          perms: _FakePerms(),
+          store: ConfigStore(),
+          root: _FakeRootHelper(),
+          screenPower: sp,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Skip')); // root
+    await tester.pumpAndSettle();
+
+    expect(find.text('Device admin (for screen-off)'), findsOneWidget);
+    await tester.tap(find.text('Grant'));
+    // Grant uses a 500ms delay; let real time pass.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pumpAndSettle();
+
+    expect(sp.requestAdminCalls, 1);
     expect(find.text('Notifications permission'), findsOneWidget);
+    state.dispose();
+  });
+
+  testWidgets('device admin Grant → not active → error shown, stays on step',
+      (tester) async {
+    final state = AppState();
+    final sp = _FakeScreenPower(adminAfterRequest: false);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OnboardingPage(
+          appState: state,
+          perms: _FakePerms(),
+          store: ConfigStore(),
+          root: _FakeRootHelper(),
+          screenPower: sp,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Skip')); // root
+    await tester.pumpAndSettle();
+    expect(find.text('Device admin (for screen-off)'), findsOneWidget);
+    await tester.tap(find.text('Grant'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pumpAndSettle();
+
+    expect(sp.requestAdminCalls, 1);
+    // Still on device admin step with an error.
+    expect(find.text('Device admin (for screen-off)'), findsOneWidget);
+    expect(find.textContaining('not activated'), findsOneWidget);
     state.dispose();
   });
 }

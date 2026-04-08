@@ -70,6 +70,30 @@ void main() {
     });
   });
 
+  group('screen power methods (M9)', () {
+    test('sleepScreen → true on happy path', () async {
+      install((_) async => true);
+      expect(await RootHelper().sleepScreen(), isTrue);
+      expect(calls, ['sleepScreen']);
+    });
+
+    test('wakeScreen → true on happy path', () async {
+      install((_) async => true);
+      expect(await RootHelper().wakeScreen(), isTrue);
+      expect(calls, ['wakeScreen']);
+    });
+
+    test('sleepScreen → false on channel exception', () async {
+      install((_) async => throw PlatformException(code: 'ERROR'));
+      expect(await RootHelper().sleepScreen(), isFalse);
+    });
+
+    test('wakeScreen → false on channel exception', () async {
+      install((_) async => throw PlatformException(code: 'ERROR'));
+      expect(await RootHelper().wakeScreen(), isFalse);
+    });
+  });
+
   group('grant methods on channel exception', () {
     test('grantWriteSecureSettings → false', () async {
       install((_) async => throw PlatformException(code: 'ERROR'));

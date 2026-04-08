@@ -1,8 +1,13 @@
 package io.hyacinth.hyacinth
 
+import android.app.KeyguardManager
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -23,12 +28,19 @@ private data class RootResult(
 )
 
 class MainActivity : FlutterActivity() {
+    // M9 — cached ComponentName for the device admin receiver. Built once
+    // per activity and reused across every `screen_power` channel call.
+    private val adminComponent: ComponentName by lazy {
+        ComponentName(this, HyacinthDeviceAdminReceiver::class.java)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
         configureForegroundServiceChannel(messenger)
         configureSecureSettingsChannel(messenger)
         configureRootChannel(messenger)
+        configureScreenPowerChannel(messenger)
     }
 
     // M8 — foreground service control. Dart calls start() in
@@ -165,7 +177,96 @@ class MainActivity : FlutterActivity() {
                         )
                         result.success(r.ok)
                     }
+                    "sleepScreen" -> {
+                        val r = runAsRoot("input keyevent 223")
+                        result.success(r.ok)
+                    }
+                    "wakeScreen" -> {
+                        val r = runAsRoot("input keyevent 224")
+                        result.success(r.ok)
+                    }
                     else -> result.notImplemented()
+                }
+            }
+    }
+
+    // M9 — screen_power orchestrator. Two-tier strategy:
+    //   1. `su -c "input keyevent 223|224"` (preferred, real panel power).
+    //   2. `DevicePolicyManager.lockNow()` / `KeyguardManager.requestDismissKeyguard`
+    //      when device admin is active.
+    // A no-op short-circuit fires when `PowerManager.isInteractive` already
+    // matches the target state so the operator can harmlessly flip the
+    // toggle at any time.
+    private fun configureScreenPowerChannel(messenger: BinaryMessenger) {
+        MethodChannel(messenger, "io.hyacinth/screen_power")
+            .setMethodCallHandler { call, result ->
+                try {
+                    val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE)
+                        as DevicePolicyManager
+                    val pm = getSystemService(Context.POWER_SERVICE)
+                        as PowerManager
+                    when (call.method) {
+                        "isInteractive" -> result.success(pm.isInteractive)
+                        "isAdminActive" -> result.success(
+                            dpm.isAdminActive(adminComponent)
+                        )
+                        "requestAdmin" -> {
+                            val intent = Intent(
+                                DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN
+                            ).putExtra(
+                                DevicePolicyManager.EXTRA_DEVICE_ADMIN,
+                                adminComponent,
+                            )
+                            // Fire and forget — caller re-checks isAdminActive
+                            // after the system dialog closes.
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                            result.success(null)
+                        }
+                        "setScreenOn" -> {
+                            val on = call.argument<Boolean>("on") ?: true
+                            // No-op when already in the target state.
+                            if (pm.isInteractive == on) {
+                                result.success("noop")
+                                return@setMethodCallHandler
+                            }
+                            // Tier 1: root.
+                            val rootCmd = if (on) {
+                                "input keyevent 224"
+                            } else {
+                                "input keyevent 223"
+                            }
+                            val rr = runAsRoot(rootCmd, 5_000)
+                            if (rr.ok) {
+                                result.success("root")
+                                return@setMethodCallHandler
+                            }
+                            // Tier 2: device admin.
+                            if (dpm.isAdminActive(adminComponent)) {
+                                if (on) {
+                                    val kg = getSystemService(Context.KEYGUARD_SERVICE)
+                                        as KeyguardManager
+                                    kg.requestDismissKeyguard(this, null)
+                                    result.success("admin")
+                                } else {
+                                    dpm.lockNow()
+                                    result.success("admin")
+                                }
+                                return@setMethodCallHandler
+                            }
+                            // Neither tier available.
+                            result.error(
+                                "no_capability",
+                                "Neither root nor device admin is available",
+                                null,
+                            )
+                        }
+                        else -> result.notImplemented()
+                    }
+                } catch (e: SecurityException) {
+                    result.error("PERMISSION_DENIED", e.message, null)
+                } catch (e: Exception) {
+                    result.error("ERROR", e.message, null)
                 }
             }
     }

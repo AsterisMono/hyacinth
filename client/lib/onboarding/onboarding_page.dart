@@ -4,6 +4,7 @@ import '../app_state.dart';
 import '../config/config_store.dart';
 import '../permissions/perm_manager.dart';
 import '../system/root_helper.dart';
+import '../system/screen_power.dart';
 
 /// First-run wizard.
 ///
@@ -26,10 +27,15 @@ class OnboardingPage extends StatefulWidget {
     this.perms = const PermManager(),
     this.store,
     this.root,
+    this.screenPower,
   });
 
   final AppState appState;
   final PermManager perms;
+
+  /// Optional [ScreenPower] (M9). Tests inject a fake to drive the
+  /// Device Admin grant step without hitting the real channel.
+  final ScreenPower? screenPower;
 
   /// Optional [ConfigStore]. Tests inject one backed by
   /// `SharedPreferences.setMockInitialValues({})`. In production we let
@@ -46,7 +52,7 @@ class OnboardingPage extends StatefulWidget {
   State<OnboardingPage> createState() => _OnboardingPageState();
 }
 
-enum _StepKind { explain, root, notifications, battery, serverUrl }
+enum _StepKind { explain, root, deviceAdmin, notifications, battery, serverUrl }
 
 class _OnboardingPageState extends State<OnboardingPage> {
   final PageController _pageController = PageController();
@@ -66,14 +72,21 @@ class _OnboardingPageState extends State<OnboardingPage> {
   bool _didGrantWriteSecureSettings = false;
 
   late final RootHelper _root;
+  late final ScreenPower _screenPower;
+
+  // M9 device-admin step state.
+  bool _adminGranting = false;
+  String? _adminError;
 
   @override
   void initState() {
     super.initState();
     _root = widget.root ?? RootHelper();
+    _screenPower = widget.screenPower ?? ScreenPower();
     _steps = const [
       _StepKind.explain,
       _StepKind.root,
+      _StepKind.deviceAdmin,
       _StepKind.notifications,
       _StepKind.battery,
       _StepKind.serverUrl,
@@ -109,11 +122,37 @@ class _OnboardingPageState extends State<OnboardingPage> {
       for (final s in _steps) {
         if (s == _StepKind.notifications && summary.postNotifications) continue;
         if (s == _StepKind.battery && summary.batteryOpt) continue;
+        // M9: screen-off uses root when available, so the device-admin
+        // step is redundant once the root probe landed.
+        if (s == _StepKind.deviceAdmin && summary.rootAvailable) continue;
         next.add(s);
       }
       setState(() => _steps = next);
     }
     _next();
+  }
+
+  Future<void> _runDeviceAdminGrant() async {
+    setState(() {
+      _adminGranting = true;
+      _adminError = null;
+    });
+    await _screenPower.requestAdmin();
+    // Give the system dialog a moment to settle before re-polling. The
+    // short wait is opportunistic — the user can always retry or skip.
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    final active = await _screenPower.isAdminActive();
+    if (!mounted) return;
+    if (active) {
+      setState(() => _adminGranting = false);
+      _next();
+    } else {
+      setState(() {
+        _adminGranting = false;
+        _adminError =
+            'Device Admin was not activated. Screen-off commands will fail.';
+      });
+    }
   }
 
   Future<void> _runRootProbe() async {
@@ -188,6 +227,8 @@ class _OnboardingPageState extends State<OnboardingPage> {
         return _explainStep();
       case _StepKind.root:
         return _rootStep();
+      case _StepKind.deviceAdmin:
+        return _deviceAdminStep();
       case _StepKind.notifications:
         return _notificationsStep();
       case _StepKind.battery:
@@ -425,6 +466,51 @@ class _OnboardingPageState extends State<OnboardingPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _deviceAdminStep() {
+    final theme = Theme.of(context);
+    final extras = <Widget>[];
+    if (_adminError != null) {
+      extras.addAll([
+        const SizedBox(height: 24),
+        Text(
+          _adminError!,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.error,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ]);
+    }
+    final List<Widget> actions;
+    if (_adminGranting) {
+      actions = const [
+        SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ];
+    } else {
+      actions = [
+        TextButton(onPressed: _next, child: const Text('Skip')),
+        FilledButton(
+          onPressed: _runDeviceAdminGrant,
+          child: const Text('Grant'),
+        ),
+      ];
+    }
+    return _heroStep(
+      icon: Icons.admin_panel_settings_outlined,
+      title: 'Device admin (for screen-off)',
+      body: 'Hyacinth needs Device Admin permission to actually power the '
+          'screen off when the operator pushes a screen-off command. '
+          'Without it, screen-off requests will fail. Root is a working '
+          "alternative if you've already granted it.",
+      actions: actions,
+      extras: extras,
     );
   }
 

@@ -63,6 +63,11 @@ type Config struct {
 	ContentRevision string          `json:"contentRevision"`
 	Brightness      json.RawMessage `json:"brightness"`
 	ScreenTimeout   json.RawMessage `json:"screenTimeout"`
+	// ScreenOn is the M9 remote screen-power toggle. `true` means the
+	// panel should be awake; `false` asks the client to drive a real
+	// screen-off via root or Device Admin. ScreenOn changes do NOT bump
+	// ContentRevision — this is orthogonal to the reload guard.
+	ScreenOn bool `json:"screenOn"`
 }
 
 // wsEnvelope is the wire shape for both directions over /ws. The `Config`
@@ -111,6 +116,7 @@ func newServer(dataDir string) *hyacinthServer {
 			ContentRevision: "2026-04-07T10:15:00Z",
 			Brightness:      json.RawMessage(`"auto"`),
 			ScreenTimeout:   json.RawMessage(`"always-on"`),
+			ScreenOn:        true,
 		},
 		conns:   make(map[*websocket.Conn]struct{}),
 		dataDir: dataDir,
@@ -713,6 +719,10 @@ const indexHTML = `<!DOCTYPE html>
         <md-slider id="brightness-slider" min="0" max="100" step="1" labeled value="50"></md-slider>
       </div>
     </div>
+    <div class="row between">
+      <label for="screen-on-switch" style="font-size:14px;" title="Requires root or Device Admin on the tablet">Display on</label>
+      <md-switch id="screen-on-switch" selected></md-switch>
+    </div>
     <md-outlined-select id="timeout-select" label="Screen Timeout">
       <md-select-option value="always-on"><div slot="headline">Always on</div></md-select-option>
       <md-select-option value="30s"><div slot="headline">30 seconds</div></md-select-option>
@@ -770,6 +780,7 @@ const indexHTML = `<!DOCTYPE html>
   const slider       = $('brightness-slider');
   const timeoutSel   = $('timeout-select');
   const saveBtn      = $('save-btn');
+  const screenOnSwitch = $('screen-on-switch');
   const connPill     = $('conn-pill');
   const connText     = $('conn-text');
   const wsStatus     = $('ws-status');
@@ -831,6 +842,7 @@ const indexHTML = `<!DOCTYPE html>
     timeoutSel.value = (typeof cfg.screenTimeout === 'string')
       ? cfg.screenTimeout
       : 'always-on';
+    screenOnSwitch.selected = cfg.screenOn !== false;
     dirty = false;
     staleBanner.classList.remove('show');
   }
@@ -841,6 +853,7 @@ const indexHTML = `<!DOCTYPE html>
       content: contentField.value,
       brightness,
       screenTimeout: timeoutSel.value || 'always-on',
+      screenOn: screenOnSwitch.selected,
     };
   }
 
@@ -852,6 +865,7 @@ const indexHTML = `<!DOCTYPE html>
     markDirty();
   });
   timeoutSel.addEventListener('change', markDirty);
+  screenOnSwitch.addEventListener('change', markDirty);
 
   // ----- Toast -----
   let toastTimer = null;

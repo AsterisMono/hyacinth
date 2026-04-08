@@ -72,4 +72,46 @@ void main() {
     expect(cfg.brightness, 'auto');
     expect(cfg.screenTimeout, '30s');
   });
+
+  // M9 — screenOn.
+
+  test('fromJson with screenOn: false parses correctly', () {
+    final cfg = HyacinthConfig.fromJson(<String, dynamic>{
+      'content': 'https://x.example/',
+      'contentRevision': 'r1',
+      'brightness': 'auto',
+      'screenTimeout': 'always-on',
+      'screenOn': false,
+    });
+    expect(cfg.screenOn, isFalse);
+  });
+
+  test('fromJson without screenOn key defaults to true', () {
+    final cfg = HyacinthConfig.fromJson(<String, dynamic>{
+      'content': 'https://x.example/',
+      'contentRevision': 'r1',
+      'brightness': 'auto',
+      'screenTimeout': 'always-on',
+    });
+    expect(cfg.screenOn, isTrue);
+  });
+
+  test('configs differing only in screenOn are not ==', () {
+    expect(sample == sample.copyWith(screenOn: false), isFalse);
+  });
+
+  test('copyWith(screenOn: false) flips the field only', () {
+    final c = sample.copyWith(screenOn: false);
+    expect(c.screenOn, isFalse);
+    expect(c.content, sample.content);
+    expect(c.brightness, sample.brightness);
+  });
+
+  test('toJson includes screenOn', () {
+    final json = sample.toJson();
+    expect(json.containsKey('screenOn'), isTrue);
+    expect(json['screenOn'], isTrue);
+    final json2 = sample.copyWith(screenOn: false).toJson();
+    expect(json2['screenOn'], isFalse);
+  });
 }

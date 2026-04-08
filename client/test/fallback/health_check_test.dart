@@ -14,6 +14,7 @@ import 'package:hyacinth/fallback/health_check.dart';
 import 'package:hyacinth/permissions/perm_manager.dart';
 import 'package:hyacinth/resource_pack/wifi_guard.dart';
 import 'package:hyacinth/system/root_helper.dart';
+import 'package:hyacinth/system/screen_power.dart';
 import 'package:hyacinth/system/secure_settings.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -32,6 +33,23 @@ class _FakeSecureSettings extends SecureSettings {
   bool granted;
   @override
   Future<bool> hasPermission() async => granted;
+}
+
+class _FakeScreenPower implements ScreenPower {
+  _FakeScreenPower({this.adminActive = false});
+  bool adminActive;
+  int requestAdminCalls = 0;
+  @override
+  Future<bool> isInteractive() async => true;
+  @override
+  Future<bool> isAdminActive() async => adminActive;
+  @override
+  Future<void> requestAdmin() async {
+    requestAdminCalls++;
+  }
+
+  @override
+  Future<String> apply(bool screenOn) async => 'admin';
 }
 
 class _FakeRootHelper extends RootHelper {
@@ -70,6 +88,7 @@ HealthCheck _makeHC({
   bool wifi = true,
   bool secureGranted = true,
   _FakeRootHelper? root,
+  _FakeScreenPower? screenPower,
 }) {
   return HealthCheck(
     store: ConfigStore(),
@@ -78,6 +97,9 @@ HealthCheck _makeHC({
     httpClient: http_,
     secureSettings: _FakeSecureSettings(granted: secureGranted),
     rootHelper: root ?? _FakeRootHelper(),
+    // Default to admin-active so the new screen-off row is green and
+    // existing tests don't need to worry about row count bookkeeping.
+    screenPower: screenPower ?? _FakeScreenPower(adminActive: true),
   );
 }
 
@@ -93,7 +115,7 @@ void main() {
         http_: MockClient((req) async => http.Response('{"ok":true}', 200)),
       );
       final report = await hc.run();
-      expect(report.checks.length, 7);
+      expect(report.checks.length, 8);
       expect(report.checks[0].status, CheckStatus.ok); // url set
       expect(report.checks[1].status, CheckStatus.ok); // server reachable
       expect(report.checks[2].status, CheckStatus.ok); // notifications
@@ -117,7 +139,7 @@ void main() {
         wifi: false,
       );
       final report = await hc.run();
-      expect(report.checks.length, 7);
+      expect(report.checks.length, 8);
       expect(report.checks[4].status, CheckStatus.warn);
       expect(report.checks[4].message, contains('Not on Wi-Fi'));
       expect(report.allOk, isFalse,
@@ -264,6 +286,62 @@ void main() {
           (c) => c.name == 'System brightness/timeout permission');
       await expectLater(row.fix!(), throwsA(isA<RootGrantFailed>()));
       expect(root.wssCalls, 1);
+    });
+
+    // M9 — screen-off capability row.
+
+    test('screen power row: ok when root cached', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'hyacinth.serverUrl': 'http://server:8080',
+        'hyacinth.root.checked': true,
+        'hyacinth.root.available': true,
+      });
+      final sp = _FakeScreenPower(adminActive: false);
+      final hc = _makeHC(
+        http_: MockClient((req) async => http.Response('{"ok":true}', 200)),
+        screenPower: sp,
+      );
+      final report = await hc.run();
+      final row = report.checks
+          .firstWhere((c) => c.name == 'Screen-off capability');
+      expect(row.status, CheckStatus.ok);
+      expect(row.message, contains('Root'));
+    });
+
+    test('screen power row: ok when admin active (no root)', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'hyacinth.serverUrl': 'http://server:8080',
+      });
+      final sp = _FakeScreenPower(adminActive: true);
+      final hc = _makeHC(
+        http_: MockClient((req) async => http.Response('{"ok":true}', 200)),
+        screenPower: sp,
+      );
+      final report = await hc.run();
+      final row = report.checks
+          .firstWhere((c) => c.name == 'Screen-off capability');
+      expect(row.status, CheckStatus.ok);
+      expect(row.message, contains('Device Admin'));
+    });
+
+    test('screen power row: fail when neither; Fix calls requestAdmin',
+        () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'hyacinth.serverUrl': 'http://server:8080',
+      });
+      final sp = _FakeScreenPower(adminActive: false);
+      final hc = _makeHC(
+        http_: MockClient((req) async => http.Response('{"ok":true}', 200)),
+        screenPower: sp,
+      );
+      final report = await hc.run();
+      final row = report.checks
+          .firstWhere((c) => c.name == 'Screen-off capability');
+      expect(row.status, CheckStatus.fail);
+      expect(row.message, contains('Neither root nor Device Admin'));
+      expect(row.fix, isNotNull);
+      await row.fix!();
+      expect(sp.requestAdminCalls, 1);
     });
 
     test('mixed report: notifications denied → that row red', () async {
