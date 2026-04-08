@@ -159,15 +159,20 @@ class _MainActivityPageState extends State<MainActivityPage> {
             Expanded(child: _healthSection()),
             const SizedBox(width: 16),
             Expanded(
-              child: SettingsBlock(
-                key: const Key('settingsCard'),
-                appState: widget.appState,
-                store: _store,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SettingsBlock(
+                    key: const Key('settingsCard'),
+                    appState: widget.appState,
+                    store: _store,
+                  ),
+                  CachedPacksCard(cache: widget.appState.packCache),
+                ],
               ),
             ),
           ],
         ),
-        CachedPacksCard(cache: widget.appState.packCache),
         const SizedBox(height: 16),
       ],
     );
