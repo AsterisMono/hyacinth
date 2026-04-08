@@ -15,6 +15,3 @@ server/data/
 *.swo
 .idea/
 .vscode/
-
-# Stray third-party stuff that shouldn't ever be tracked.
-wemeet-*/
