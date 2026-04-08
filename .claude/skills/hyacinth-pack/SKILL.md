@@ -25,6 +25,33 @@ These are the gotchas that distinguish a Hyacinth pack from a normal Vite projec
 8. **Powersave CPU** — M11 auto-tunes the tablet to `powersave` while content is showing. Heavy `requestAnimationFrame` loops (60fps shaders, particle physics) will jitter. Prefer CSS animations, sparse `setInterval` updates, or 30fps caps.
 9. **Landscape, responsive** — the tablet is mounted horizontally. Design with `vw`/`vh`/`clamp()` and relative units so the layout adapts to whatever viewport the WebView reports — Android's `devicePixelRatio` scaling means the CSS viewport is smaller than the physical screen, and hardcoding pixel counts will bite. `vite dev` in a desktop browser at a landscape tablet aspect ratio is the primary preview surface; the layout should survive any reasonable viewport without breaking.
 
+## Device telemetry (Web APIs)
+
+Packs can reach the tablet's battery and network state directly through two standard web APIs — no Hyacinth-owned JS bridge, no MethodChannel, no `window.hyacinth` namespace. Android System WebView is Chromium/Blink and still ships both `navigator.getBattery()` and `navigator.connection`; Firefox and Safari removed them on fingerprinting grounds, but Chrome kept them, and `flutter_inappwebview` inherits that. Use them as-is and treat the desktop-browser preview path as the edge case, not the kiosk.
+
+**`navigator.getBattery()`** — returns a `Promise<BatteryManager>`. The manager exposes `level` (float, 0..1), `charging` (bool), `chargingTime` (seconds until full, or `Infinity` if discharging), and `dischargingTime` (seconds until empty, or `Infinity` if charging or unknown). It emits four events: `levelchange`, `chargingchange`, `chargingtimechange`, `dischargingtimechange`. Subscribe to whichever ones you care about; the updates are push-driven by the OS so no polling timer is needed.
+
+**`navigator.connection`** — a live `NetworkInformation` object. Read `type` (`'wifi'`, `'ethernet'`, `'cellular'`, `'none'`, etc.), `effectiveType` (`'4g'`, `'3g'`, `'2g'`, `'slow-2g'`), `downlink` (estimated Mbps), and `saveData` (bool, reflects the OS data-saver toggle). It emits a single `change` event whenever any of those fields updates.
+
+**Feature-detect, always.** Packs MUST guard both APIs with `if ('getBattery' in navigator)` / `if ('connection' in navigator)` before calling them. The `pnpm dev` desktop preview path is the primary iteration surface before M15.1 kiosk push, and pack authors routinely open it in Firefox — which returns `undefined` for both. Treat "API missing" as a first-class branch that hides the telemetry element cleanly, not as an error state.
+
+```js
+// Feature-detect once at startup.
+const battery = 'getBattery' in navigator ? await navigator.getBattery() : null;
+const el = document.querySelector('#battery');
+
+function renderBattery() {
+  if (!battery) { el.style.display = 'none'; return; }
+  el.textContent = Math.round(battery.level * 100) + '%';
+}
+
+renderBattery();
+battery?.addEventListener('levelchange', renderBattery);
+battery?.addEventListener('chargingchange', renderBattery);
+```
+
+**What this doesn't give you.** No data-usage byte counters (Android `TrafficStats` has no web equivalent, and a pack-side carrier-cap calculation would be worse than useless); no carrier or SIM info (gated on phone-state permissions Hyacinth deliberately never requests); no per-pack permission gating (if the WebView has the API, every pack has it — treat it as ambient, not scoped); read-only (these APIs cannot change device state, only observe it). If you find yourself wanting any of those, stop and ask — a future milestone can add a native bridge, but today's answer is "out of scope, use what the web gives you."
+
 ## Scaffolding flow
 
 When the user asks you to create a new pack:

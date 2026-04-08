@@ -84,6 +84,14 @@
 
       <div class="latin">Hyacinthus orientalis &nbsp;·&nbsp; vivit hora</div>
     </section>
+
+    <!-- Battery marginalia — bottom-right corner, inside the bracket.
+         Feature-detected in main.js; hidden entirely when
+         navigator.getBattery is unavailable (e.g. Firefox desktop preview). -->
+    <aside class="battery" id="battery" aria-hidden="true">
+      <span class="battery-level" id="battery-level">·</span>
+      <span class="battery-charging" id="battery-charging"></span>
+    </aside>
   </main>
 
   <script type="module" src="./main.js"></script>

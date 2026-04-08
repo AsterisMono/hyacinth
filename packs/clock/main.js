@@ -86,3 +86,40 @@ function tick() {
 
 tick();
 setInterval(tick, 1000);
+
+// ----- Battery marginalia (M15.2) -----
+//
+// Android System WebView is Blink and still ships navigator.getBattery(),
+// even though Firefox/Safari dropped it on fingerprinting grounds. We use
+// it directly — no polling, just the levelchange/chargingchange events —
+// and hide the readout entirely when the API is missing (e.g. a `pnpm dev`
+// desktop preview in Firefox) so the clock face renders unchanged.
+const batteryEl = document.getElementById('battery');
+const batteryLevelEl = document.getElementById('battery-level');
+const batteryChargingEl = document.getElementById('battery-charging');
+
+async function initBattery() {
+  if (!('getBattery' in navigator)) {
+    if (batteryEl) batteryEl.style.display = 'none';
+    return;
+  }
+
+  const battery = await navigator.getBattery();
+
+  function render() {
+    if (batteryLevelEl) {
+      batteryLevelEl.textContent = Math.round(battery.level * 100) + '%';
+    }
+    if (batteryChargingEl) {
+      // `⚡` reads too modern against the herbarium voice; use a bracketed
+      // italic annotation that matches the Cormorant Garamond marginalia.
+      batteryChargingEl.textContent = battery.charging ? '[charging]' : '';
+    }
+  }
+
+  render();
+  battery.addEventListener('levelchange', render);
+  battery.addEventListener('chargingchange', render);
+}
+
+initBattery();
