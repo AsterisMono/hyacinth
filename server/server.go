@@ -872,6 +872,21 @@ const indexHTML = `<!DOCTYPE html>
      spacer pushes Save away from the screen pair so the visual
      hierarchy reads left-to-right: "do once" → "do once" → "save". */
   .actions .spacer { flex: 1 1 auto; min-width: 8px; }
+  /* On phone widths the three buttons can't fit on one line and the
+     default flex-wrap leaves Save floating alone on row 2 with awkward
+     whitespace to its left. Switch to a 2-column grid: screen buttons
+     in row 1, Save fills the full row 2. */
+  @media (max-width: 600px) {
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .actions .spacer { display: none; }
+    .actions md-filled-button#save-btn {
+      grid-column: 1 / -1;
+    }
+  }
   .field-label {
     font-size: 13px;
     font-weight: 500;
