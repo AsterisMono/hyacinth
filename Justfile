@@ -63,3 +63,7 @@ pack-upload id: (pack-build id)
     @echo ""
     @echo "✦ Uploaded {{id}} to ${HYACINTH_SERVER:-http://localhost:8080}"
     @echo "  Set the operator UI's content URL to: hyacinth://pack/{{id}}/index.html"
+
+# Resume claude code session
+claude:
+    claude --resume Hyacinth-Main --dangerously-skip-permissions
