@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../config/config_store.dart';
 import '../system/window_size.dart';
+import 'cached_packs_card.dart';
 import 'health_check.dart';
 import 'settings_page.dart';
 // RootGrantFailed lives in health_check.dart.
@@ -139,6 +140,7 @@ class _MainActivityPageState extends State<MainActivityPage> {
           appState: widget.appState,
           store: _store,
         ),
+        CachedPacksCard(cache: widget.appState.packCache),
         _statusFooter(phase, error),
         const SizedBox(height: 16),
       ],
@@ -165,6 +167,7 @@ class _MainActivityPageState extends State<MainActivityPage> {
             ),
           ],
         ),
+        CachedPacksCard(cache: widget.appState.packCache),
         const SizedBox(height: 16),
       ],
     );

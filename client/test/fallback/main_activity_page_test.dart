@@ -3,6 +3,8 @@
 // triggering its async refresh, and we subclass AppState to record
 // `retryConnect` / `returnToDisplaying` calls.
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -15,8 +17,14 @@ import 'package:hyacinth/net/config_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:hyacinth/permissions/perm_manager.dart';
+import 'package:hyacinth/resource_pack/pack_cache.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// Shared temp dir injected into [_RecordingAppState.packCache] so the
+/// M8.4 CachedPacksCard never reaches into real `getApplicationSupportDirectory`
+/// (which hangs `flutter test`).
+late Directory _packTmp;
 
 class _RecordingAppState extends AppState {
   _RecordingAppState({this.cachedConfig})
@@ -32,6 +40,7 @@ class _RecordingAppState extends AppState {
             httpClient:
                 MockClient((_) async => http.Response('{"ok":true}', 200)),
           ),
+          packCache: PackCache(overrideRoot: _packTmp),
           fallbackRetryInterval: const Duration(hours: 1),
         );
 
@@ -77,11 +86,19 @@ class _AlwaysGrantedPerms implements PermManager {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() {
+  setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{
       'hyacinth.serverUrl': 'http://server:8080',
       'hyacinth.onboardingComplete': true,
     });
+    _packTmp =
+        await Directory.systemTemp.createTemp('hyacinth_main_act_packtmp_');
+  });
+
+  tearDown(() async {
+    if (await _packTmp.exists()) {
+      await _packTmp.delete(recursive: true);
+    }
   });
 
   testWidgets('renders mixed health rows and Reload button calls retry',

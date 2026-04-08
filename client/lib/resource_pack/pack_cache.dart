@@ -20,6 +20,27 @@ bool isSafeRelPath(String relPath) {
   return true;
 }
 
+/// Read-only snapshot of one pack as observed on disk by
+/// [PackCache.listCachedPacks]. Used by the M8.4 "Cached packs" panel
+/// in `MainActivityPage` to render the local cache state.
+class CachedPackInfo {
+  const CachedPackInfo({
+    required this.id,
+    required this.version,
+    required this.manifest,
+    required this.sizeBytes,
+  });
+
+  final String id;
+  final int version;
+  final PackManifest manifest;
+
+  /// On-disk size of the active version's `content/` tree, summed over
+  /// all regular files. For zip packs this is the unzipped size, which
+  /// can differ from the manifest's compressed-source size.
+  final int sizeBytes;
+}
+
 /// On-disk pack cache. Layout under [root]:
 ///
 /// ```
@@ -48,12 +69,17 @@ class PackCache {
   Directory? _cachedRoot;
 
   /// Returns (and creates) the top-level pack-cache directory.
+  ///
+  /// Internally uses synchronous filesystem primitives once the base
+  /// directory is known, so the returned future resolves on the next
+  /// microtask. This matters for [listCachedPacks] / `FutureBuilder`
+  /// in widget tests — see the implementation note on [listCachedPacks].
   Future<Directory> root() async {
     if (_cachedRoot != null) return _cachedRoot!;
     final base = _overrideRoot ?? await getApplicationSupportDirectory();
     final dir = Directory('${base.path}/packs');
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
     }
     _cachedRoot = dir;
     return dir;
@@ -213,9 +239,87 @@ class PackCache {
     await r.create(recursive: true);
   }
 
+  /// Lists every pack currently materialized under [root]. Walks the pack
+  /// directories, reads each `current` pointer + `manifest.json`, and
+  /// computes the on-disk size of the active version's `content/` tree.
+  ///
+  /// Pack directories with no `current` pointer (download in progress
+  /// before the first successful `swapCurrent`) or with a malformed
+  /// manifest are silently skipped — surfacing them as errors in the UI
+  /// would just spam noise from a normal in-flight write.
+  ///
+  /// Implementation note: this uses **synchronous** filesystem primitives
+  /// (`listSync`, `existsSync`, `readAsStringSync`, `lengthSync`) wrapped
+  /// in an `async` function. The reason: real async `Directory.list` uses
+  /// wall-clock OS callbacks that `pumpAndSettle` does NOT drain in widget
+  /// tests, so a `FutureBuilder<List<CachedPackInfo>>` mounted in
+  /// `flutter test` would never resolve. Sync I/O makes the future resolve
+  /// on the next microtask, which `pump` does see. The pack root is small
+  /// (a few directories, one tiny manifest each), so blocking the isolate
+  /// for a few ms is fine.
+  Future<List<CachedPackInfo>> listCachedPacks() async {
+    final r = await root();
+    if (!r.existsSync()) return const <CachedPackInfo>[];
+    final out = <CachedPackInfo>[];
+    for (final entry in r.listSync()) {
+      if (entry is! Directory) continue;
+      final segs =
+          entry.uri.pathSegments.where((s) => s.isNotEmpty).toList();
+      if (segs.isEmpty) continue;
+      final id = segs.last;
+      // Defensive: skip any staging/tmp suffix if it ever ends up at
+      // <root>/<id> instead of as a sibling under the real pack dir.
+      if (id.endsWith('.staging') || id.endsWith('.tmp')) continue;
+      try {
+        final pointer = File('${entry.path}/current');
+        if (!pointer.existsSync()) continue;
+        final version = int.tryParse(pointer.readAsStringSync().trim());
+        if (version == null) continue;
+        final manifestFile =
+            File('${entry.path}/$version/manifest.json');
+        if (!manifestFile.existsSync()) continue;
+        final manifest = PackManifest.fromJson(
+          jsonDecode(manifestFile.readAsStringSync())
+              as Map<String, dynamic>,
+        );
+        final contentDir = Directory('${entry.path}/$version/content');
+        final size = _dirSizeSync(contentDir);
+        out.add(CachedPackInfo(
+          id: id,
+          version: version,
+          manifest: manifest,
+          sizeBytes: size,
+        ));
+      } catch (_) {
+        // Defensive: any IO/JSON failure on one pack must not poison the
+        // whole listing.
+        continue;
+      }
+    }
+    out.sort((a, b) => a.id.compareTo(b.id));
+    return out;
+  }
+
+  int _dirSizeSync(Directory dir) {
+    if (!dir.existsSync()) return 0;
+    var total = 0;
+    for (final entity
+        in dir.listSync(recursive: true, followLinks: false)) {
+      if (entity is File) {
+        try {
+          total += entity.lengthSync();
+        } catch (_) {
+          // Skip files we can't stat (race vs. concurrent write).
+        }
+      }
+    }
+    return total;
+  }
+
   /// Garbage-collects old versions of [packId], keeping the [keepLast]
   /// highest version numbers. The active version (per `current`) is
   /// always retained even if it would otherwise fall outside the window.
+  // (definition above)
   Future<void> gc(String packId, {int keepLast = 2}) async {
     final dir = await _packDir(packId);
     final active = await currentVersion(packId);

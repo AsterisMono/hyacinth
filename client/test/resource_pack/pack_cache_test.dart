@@ -232,4 +232,115 @@ void main() {
     }
     expect(survivors, containsAll(<int>{1, 4}));
   });
+
+  group('M8.4 listCachedPacks', () {
+    Future<void> seedPack({
+      required String id,
+      required int version,
+      required String type,
+      required String filename,
+      required List<int> bytes,
+    }) async {
+      final f = await cache.stagingFile(id, version, filename);
+      await f.writeAsBytes(bytes);
+      await cache.writeManifest(
+        id,
+        version,
+        PackManifest(
+          id: id,
+          version: version,
+          type: type,
+          filename: filename,
+          sha256: 'sha-$id',
+          size: bytes.length,
+          createdAt: '2026-04-08T00:00:00Z',
+        ),
+      );
+      await cache.swapCurrent(id, version);
+    }
+
+    test('returns one entry per cached pack, sorted by id', () async {
+      await seedPack(
+        id: 'b-img',
+        version: 1,
+        type: 'png',
+        filename: 'image.png',
+        bytes: <int>[1, 2, 3, 4, 5],
+      );
+      await seedPack(
+        id: 'a-zip',
+        version: 2,
+        type: 'zip',
+        filename: 'index.html',
+        bytes: List<int>.filled(2048, 0x42),
+      );
+
+      final infos = await cache.listCachedPacks();
+      expect(infos.length, 2);
+      // Sorted alphabetically by id.
+      expect(infos[0].id, 'a-zip');
+      expect(infos[0].version, 2);
+      expect(infos[0].manifest.type, 'zip');
+      expect(infos[0].sizeBytes, 2048);
+      expect(infos[1].id, 'b-img');
+      expect(infos[1].version, 1);
+      expect(infos[1].manifest.type, 'png');
+      expect(infos[1].sizeBytes, 5);
+    });
+
+    test('skips a pack dir whose current pointer is missing', () async {
+      // Lay down a manifest + content but never call swapCurrent.
+      final f = await cache.stagingFile('orphan', 1, 'image.png');
+      await f.writeAsBytes(<int>[9, 9, 9]);
+      await cache.writeManifest(
+        'orphan',
+        1,
+        const PackManifest(
+          id: 'orphan',
+          version: 1,
+          type: 'png',
+          filename: 'image.png',
+          sha256: 'h',
+          size: 3,
+          createdAt: 't',
+        ),
+      );
+      // And one good pack so we can verify the listing isn't empty.
+      await seedPack(
+        id: 'good',
+        version: 1,
+        type: 'png',
+        filename: 'image.png',
+        bytes: <int>[7],
+      );
+      final infos = await cache.listCachedPacks();
+      expect(infos.map((p) => p.id), <String>['good']);
+    });
+
+    test('skips a pack with malformed manifest.json', () async {
+      // Force a current pointer to point at a version with broken JSON.
+      final root = await cache.root();
+      final packDir = Directory('${root.path}/broken');
+      await Directory('${packDir.path}/1/content').create(recursive: true);
+      await File('${packDir.path}/1/manifest.json').writeAsString('not json');
+      await File('${packDir.path}/1/content/image.png')
+          .writeAsBytes(<int>[1, 2, 3]);
+      await File('${packDir.path}/current').writeAsString('1');
+      // And a good neighbour.
+      await seedPack(
+        id: 'ok',
+        version: 1,
+        type: 'png',
+        filename: 'image.png',
+        bytes: <int>[1],
+      );
+      final infos = await cache.listCachedPacks();
+      expect(infos.map((p) => p.id), <String>['ok']);
+    });
+
+    test('returns empty list when the cache root is empty', () async {
+      final infos = await cache.listCachedPacks();
+      expect(infos, isEmpty);
+    });
+  });
 }
