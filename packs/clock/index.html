@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Hyacinth Pack — clock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=Cinzel+Decorative:wght@400;700&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=IM+Fell+English+SC&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <!-- Paper grain overlay — static SVG noise, kept as a single fixed
+       background layer so it doesn't repaint each frame. -->
+  <div class="grain" aria-hidden="true"></div>
+
+  <main class="card">
+    <!-- Decorative corner brackets — like a museum label or vintage
+         passe-partout. Pure CSS borders, four absolutely-positioned divs. -->
+    <div class="bracket bracket--tl" aria-hidden="true"></div>
+    <div class="bracket bracket--tr" aria-hidden="true"></div>
+    <div class="bracket bracket--bl" aria-hidden="true"></div>
+    <div class="bracket bracket--br" aria-hidden="true"></div>
+
+    <!-- Hand-drawn hyacinth sprig — stylized botanical line drawing.
+         Single stroke weight, sage ink. Drifts on a 60s loop via CSS. -->
+    <svg class="sprig" viewBox="0 0 400 700" aria-hidden="true">
+      <g fill="none" stroke="currentColor" stroke-width="2.2"
+         stroke-linecap="round" stroke-linejoin="round">
+        <!-- main stem -->
+        <path d="M200 680 C 195 540, 210 420, 200 280" />
+        <!-- bell flowers (hyacinth florets) — clustered along upper stem -->
+        <g class="floret">
+          <path d="M200 280 C 178 268, 175 248, 188 235 C 200 224, 218 232, 220 250 C 222 268, 215 282, 200 280 Z" />
+          <path d="M200 280 L 200 295" />
+        </g>
+        <path d="M170 305 C 152 295, 150 277, 162 266 C 174 256, 190 264, 192 280 C 194 295, 184 308, 170 305 Z" />
+        <path d="M170 305 L 175 318" />
+        <path d="M225 310 C 244 302, 250 284, 240 270 C 230 258, 213 264, 210 280 C 208 296, 215 312, 225 310 Z" />
+        <path d="M225 310 L 222 323" />
+        <path d="M165 345 C 145 338, 140 318, 152 306 C 165 295, 184 304, 186 320 C 188 336, 178 350, 165 345 Z" />
+        <path d="M165 345 L 172 358" />
+        <path d="M232 352 C 252 345, 258 326, 247 312 C 235 300, 217 308, 214 324 C 211 340, 220 357, 232 352 Z" />
+        <path d="M232 352 L 228 365" />
+        <path d="M188 380 C 168 372, 162 352, 174 340 C 188 329, 206 338, 208 354 C 210 370, 200 384, 188 380 Z" />
+        <path d="M188 380 L 195 393" />
+        <path d="M218 388 C 238 380, 244 360, 232 348 C 218 337, 200 346, 198 362 C 196 378, 206 392, 218 388 Z" />
+        <path d="M218 388 L 215 401" />
+        <!-- topmost bud (closed) -->
+        <path d="M198 232 C 188 222, 188 208, 196 200 C 206 192, 218 198, 218 212 C 218 224, 210 234, 198 232 Z" />
+        <!-- long lance leaves at base, crossing the stem -->
+        <path d="M200 600 C 130 540, 90 440, 70 320 C 64 290, 78 286, 90 312 C 112 410, 150 510, 200 600 Z" />
+        <path d="M200 610 C 270 555, 312 460, 332 340 C 338 310, 324 304, 310 330 C 286 422, 250 520, 200 610 Z" />
+        <!-- vein lines on leaves -->
+        <path d="M200 600 C 170 530, 140 440, 88 320" stroke-width="1.2" opacity="0.6" />
+        <path d="M200 605 C 230 540, 264 450, 314 332" stroke-width="1.2" opacity="0.6" />
+        <!-- decorative tendril curl -->
+        <path d="M200 660 C 160 670, 145 690, 160 705 C 170 712, 180 702, 175 692" stroke-width="1.4" />
+      </g>
+    </svg>
+
+    <!-- Right column: editorial stack — specimen tag, wordmark,
+         decorative rule, clock, date marginalia. -->
+    <section class="plate">
+      <div class="specimen-tag">
+        <span class="tag-line">Specimen</span>
+        <span class="tag-num">№ I</span>
+      </div>
+
+      <h1 class="wordmark">Project Hyacinth</h1>
+
+      <div class="rule" aria-hidden="true">
+        <span class="rule-line"></span>
+        <span class="rule-fleuron">❦</span>
+        <span class="rule-line"></span>
+      </div>
+
+      <div class="clock" id="clock">--:--</div>
+
+      <div class="date-block">
+        <div class="date-roman" id="date-roman">·</div>
+        <div class="date-prose" id="date-prose">·</div>
+      </div>
+
+      <div class="latin">Hyacinthus orientalis &nbsp;·&nbsp; vivit hora</div>
+    </section>
+  </main>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

@@ -1,0 +1,231 @@
+/* Hyacinth pack — antique herbarium specimen card.
+ *
+ * Aesthetic: a page from a 19th-century botanical journal. Cream paper
+ * with grain, forest-green ink, hand-drawn hyacinth sprig anchored on the
+ * left, an editorial stack of typography on the right (specimen tag,
+ * wordmark, ornamental rule, clock numerals, marginalia). Asymmetric on
+ * purpose — the clock is not centered.
+ *
+ * Constraints kept in mind:
+ *   - 1280×800 landscape kiosk target (uses vw/vh + clamp)
+ *   - Powersave CPU (one slow CSS sway, no rAF, no shaders)
+ *   - No interaction (IgnorePointer wraps the WebView)
+ */
+
+:root {
+  --hp-paper: #F2F1DD;
+  --hp-paper-deep: #ECEAD0;
+  --hp-ink: #1F3A20;
+  --hp-ink-soft: #2F4A30;
+  --hp-sage: #7E9072;
+  --hp-sage-deep: #5C6E50;
+  --hp-rust: #8B4A2B;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--hp-paper);
+  color: var(--hp-ink);
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Soft vignette + warm radial wash gives the cream paper depth without
+ * needing a real texture image. Two layered radial-gradients fake the
+ * "thumbed corner" feel of an old card. */
+body {
+  background:
+    radial-gradient(ellipse 80% 60% at 30% 40%, rgba(255, 250, 220, 0.6) 0%, transparent 70%),
+    radial-gradient(ellipse 100% 80% at 70% 80%, rgba(140, 130, 90, 0.10) 0%, transparent 60%),
+    var(--hp-paper);
+}
+
+/* Paper grain via inline SVG noise — single fixed layer, low opacity.
+ * baseFrequency tuned for visible-but-not-coarse grain at 1280×800. */
+.grain {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.35;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='280' height='280'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='matrix' values='0 0 0 0 0.12  0 0 0 0 0.22  0 0 0 0 0.12  0 0 0 0.55 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+/* The card itself fills the viewport and hosts the asymmetric layout. */
+.card {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 42% 58%;
+  align-items: center;
+  padding: clamp(32px, 5vw, 72px);
+  z-index: 2;
+}
+
+/* ----- Decorative corner brackets ----- */
+.bracket {
+  position: absolute;
+  width: clamp(28px, 3vw, 44px);
+  height: clamp(28px, 3vw, 44px);
+  border-color: var(--hp-ink);
+}
+.bracket--tl { top: 24px; left: 24px; border-top: 1.5px solid; border-left: 1.5px solid; }
+.bracket--tr { top: 24px; right: 24px; border-top: 1.5px solid; border-right: 1.5px solid; }
+.bracket--bl { bottom: 24px; left: 24px; border-bottom: 1.5px solid; border-left: 1.5px solid; }
+.bracket--br { bottom: 24px; right: 24px; border-bottom: 1.5px solid; border-right: 1.5px solid; }
+
+/* ----- Botanical sprig (left column) ----- */
+.sprig {
+  width: 100%;
+  max-width: clamp(280px, 36vw, 460px);
+  height: auto;
+  max-height: 88vh;
+  margin: 0 auto;
+  color: var(--hp-sage-deep);
+  /* Slow ambient sway — 60s loop, transform-only, GPU-friendly. */
+  transform-origin: 50% 95%;
+  animation: sway 64s ease-in-out infinite;
+  filter: drop-shadow(0 6px 18px rgba(60, 80, 50, 0.18));
+}
+
+@keyframes sway {
+  0%, 100% { transform: rotate(-1.2deg) translateY(0); }
+  50%      { transform: rotate(1.2deg) translateY(-4px); }
+}
+
+/* ----- Right-column editorial plate ----- */
+.plate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: clamp(10px, 1.4vh, 22px);
+  padding-right: clamp(24px, 4vw, 64px);
+  position: relative;
+}
+
+/* The "Specimen №" tag — small caps, two-line vertical-rhythm label,
+ * acts like a museum acquisition stamp. */
+.specimen-tag {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-family: 'IM Fell English SC', Georgia, serif;
+  color: var(--hp-rust);
+  font-size: clamp(11px, 1.1vw, 14px);
+  letter-spacing: 0.18em;
+  margin-bottom: 4px;
+}
+.specimen-tag .tag-line { opacity: 0.85; }
+.specimen-tag .tag-num {
+  font-family: 'Cinzel', Georgia, serif;
+  font-weight: 500;
+  font-size: clamp(13px, 1.3vw, 17px);
+  letter-spacing: 0.05em;
+}
+
+/* Wordmark — Cinzel Decorative gives the swash flourishes on P and H
+ * that match the herbarium reference card. */
+.wordmark {
+  font-family: 'Cinzel Decorative', Georgia, serif;
+  font-weight: 700;
+  font-size: clamp(28px, 3.4vw, 46px);
+  letter-spacing: 0.04em;
+  color: var(--hp-ink);
+  margin: 0;
+  line-height: 1;
+  /* Subtle ink-bleed via duplicate text-shadow */
+  text-shadow:
+    0 0 0.5px rgba(31, 58, 32, 0.4),
+    0 0 12px rgba(31, 58, 32, 0.06);
+}
+
+/* Decorative double rule with a heart-fleuron in the middle —
+ * the kind of ornamental break you'd see in a Victorian title page. */
+.rule {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: clamp(220px, 30vw, 380px);
+  margin: 6px 0;
+}
+.rule-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    var(--hp-sage-deep) 20%,
+    var(--hp-sage-deep) 80%,
+    transparent 100%
+  );
+}
+.rule-fleuron {
+  font-family: 'Cinzel Decorative', Georgia, serif;
+  color: var(--hp-rust);
+  font-size: 18px;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+
+/* Clock numerals — Cinzel, deliberately not enormous. The composition
+ * is what carries the page; the clock is one element among several. */
+.clock {
+  font-family: 'Cinzel', Georgia, serif;
+  font-size: clamp(96px, 11vw, 168px);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0.02em;
+  line-height: 0.95;
+  margin: 0;
+  color: var(--hp-ink);
+  /* Faint ink shadow for press-printed feel */
+  text-shadow: 0 1px 0 rgba(31, 58, 32, 0.08);
+}
+
+/* Date marginalia — italic Cormorant, two lines: roman-numeral version
+ * stacked above the spelled-out prose. Sits like handwritten annotation. */
+.date-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+.date-roman {
+  font-family: 'Cinzel', Georgia, serif;
+  font-size: clamp(13px, 1.3vw, 17px);
+  letter-spacing: 0.22em;
+  color: var(--hp-sage-deep);
+}
+.date-prose {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-style: italic;
+  font-size: clamp(15px, 1.5vw, 20px);
+  color: var(--hp-ink-soft);
+  letter-spacing: 0.01em;
+}
+
+/* Latin tagline — the smallest type on the page, the field-note caption.
+ * Italic Cormorant, generously letter-spaced, soft sage. */
+.latin {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-style: italic;
+  font-size: clamp(11px, 1.1vw, 14px);
+  letter-spacing: 0.14em;
+  color: var(--hp-sage-deep);
+  opacity: 0.9;
+  margin-top: clamp(6px, 1vh, 14px);
+}
+
+/* ----- Reduced motion: kill the sway ----- */
+@media (prefers-reduced-motion: reduce) {
+  .sprig { animation: none; }
+}
