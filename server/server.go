@@ -1008,6 +1008,13 @@ const indexHTML = `<!DOCTYPE html>
     color: var(--md-sys-color-on-surface-variant);
     background: var(--md-sys-color-surface-container-low);
   }
+  /* The class rule above sets display:flex which would otherwise win
+     against the user-agent [hidden]{display:none}. Restore the hidden
+     semantics explicitly. Same defensive override for md-list. */
+  .pack-empty[hidden],
+  md-list[hidden] {
+    display: none !important;
+  }
   .pack-empty md-icon {
     font-size: 28px;
     --md-icon-size: 28px;
@@ -1152,13 +1159,6 @@ const indexHTML = `<!DOCTYPE html>
     </div>
     <div class="upload-form">
       <md-outlined-text-field id="pack-id" label="Pack ID (slug)"></md-outlined-text-field>
-      <md-outlined-select id="pack-type" label="Type">
-        <md-select-option value="png" selected><div slot="headline">png</div></md-select-option>
-        <md-select-option value="jpg"><div slot="headline">jpg</div></md-select-option>
-        <md-select-option value="webp"><div slot="headline">webp</div></md-select-option>
-        <md-select-option value="gif"><div slot="headline">gif</div></md-select-option>
-        <md-select-option value="zip"><div slot="headline">zip</div></md-select-option>
-      </md-outlined-select>
       <label class="file-input-wrap">
         <md-icon>upload_file</md-icon>
         <input type="file" id="pack-file" accept="application/zip,image/png,image/jpeg,image/webp,image/gif" />
@@ -1437,7 +1437,8 @@ const indexHTML = `<!DOCTYPE html>
 
   // ----- Resource Packs (M5) -----
   const packIdField   = $('pack-id');
-  const packTypeSel   = $('pack-type');
+  // packTypeSel removed in M9.3 — type is now sniffed from the
+  // uploaded file's MIME / extension via packTypeFromFile().
   const packFileInput = $('pack-file');
   const packUploadBtn = $('pack-upload-btn');
   const packListEl    = $('pack-list');
@@ -1538,12 +1539,30 @@ const indexHTML = `<!DOCTYPE html>
     }
   }
 
+  // M9.3: derive the pack type from the file itself instead of
+  // making the operator pick it. We honor the file's MIME first,
+  // fall back to the extension.
+  function packTypeFromFile(file) {
+    var name = (file.name || '').toLowerCase();
+    var mime = (file.type || '').toLowerCase();
+    if (mime === 'application/zip' || name.endsWith('.zip')) return 'zip';
+    if (mime === 'image/png' || name.endsWith('.png')) return 'png';
+    if (mime === 'image/jpeg' || name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'jpg';
+    if (mime === 'image/webp' || name.endsWith('.webp')) return 'webp';
+    if (mime === 'image/gif' || name.endsWith('.gif')) return 'gif';
+    return null;
+  }
+
   packUploadBtn.addEventListener('click', async () => {
     const id = (packIdField.value || '').trim();
-    const type = packTypeSel.value || 'png';
     const file = packFileInput.files && packFileInput.files[0];
     if (!id) { toast('Enter a pack id', true); return; }
     if (!file) { toast('Choose a file', true); return; }
+    const type = packTypeFromFile(file);
+    if (!type) {
+      toast('Unsupported file type — pick a zip or an image', true);
+      return;
+    }
     packUploadBtn.disabled = true;
     try {
       const fd = new FormData();
