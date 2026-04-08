@@ -6,7 +6,6 @@ import '../config/config_model.dart';
 import '../resource_pack/pack_cache.dart';
 import '../system/brightness.dart';
 import '../system/config_policy.dart';
-import '../system/screen_power.dart';
 import '../system/secure_settings.dart';
 import 'webview_controller.dart';
 
@@ -35,14 +34,19 @@ class DisplayPage extends StatefulWidget {
     required this.config,
     this.packCache,
     this.onBackRequested,
+    this.screenPowerError,
     WindowBrightness? windowBrightness,
     SecureSettings? secureSettings,
-    ScreenPower? screenPower,
   })  : _windowBrightness = windowBrightness,
-        _secureSettings = secureSettings,
-        _screenPower = screenPower;
+        _secureSettings = secureSettings;
 
   final HyacinthConfig config;
+
+  /// M9.1 — most recent screen-power error from [AppState]. When non-null
+  /// a red banner is rendered over the WebView with this string. The
+  /// banner is orthogonal to everything else — no reload guard interaction,
+  /// no brightness/timeout coupling.
+  final String? screenPowerError;
 
   /// Invoked when the user triggers the system Back gesture from the
   /// fullscreen display. The parent (`HyacinthApp`) wires this to
@@ -64,10 +68,6 @@ class DisplayPage extends StatefulWidget {
   /// this null and a default `SecureSettings()` is built in
   /// [State.initState].
   final SecureSettings? _secureSettings;
-
-  /// Test seam for the M9 screen-power layer. Production code leaves
-  /// this null and a default `ScreenPower()` is built in [State.initState].
-  final ScreenPower? _screenPower;
 
   @override
   State<DisplayPage> createState() => _DisplayPageState();
@@ -104,14 +104,8 @@ class _DisplayPageState extends State<DisplayPage>
   late HyacinthWebView _webView;
   late final WindowBrightness _windowBrightness;
   late final SecureSettings _secureSettings;
-  late final ScreenPower _screenPower;
   _SystemDisplaySnapshot? _snapshot;
   bool _hasSecurePermission = false;
-
-  /// True when the most recent [ScreenPower.apply] call threw
-  /// [ScreenPowerUnavailable]. Surfaces as an error banner over the
-  /// WebView; reset on the next successful apply.
-  bool _screenPowerError = false;
 
   @override
   void initState() {
@@ -121,7 +115,6 @@ class _DisplayPageState extends State<DisplayPage>
     WakelockPlus.enable();
     _windowBrightness = widget._windowBrightness ?? WindowBrightness();
     _secureSettings = widget._secureSettings ?? SecureSettings();
-    _screenPower = widget._screenPower ?? ScreenPower();
     _webView = HyacinthWebView(
       url: widget.config.content,
       packCache: widget.packCache,
@@ -164,23 +157,6 @@ class _DisplayPageState extends State<DisplayPage>
       }
     } catch (e) {
       debugPrint('window brightness apply failed: $e');
-    }
-
-    // M9 — screen power. Runs regardless of WRITE_SECURE_SETTINGS because
-    // the capability layer (root / Device Admin) is orthogonal. No-op on
-    // the native side when already in the target state; throws
-    // ScreenPowerUnavailable when neither tier is available.
-    try {
-      await _screenPower.apply(cfg.screenOn);
-      if (mounted && _screenPowerError) {
-        setState(() => _screenPowerError = false);
-      }
-    } on ScreenPowerUnavailable {
-      if (mounted) {
-        setState(() => _screenPowerError = true);
-      }
-    } catch (e) {
-      debugPrint('ScreenPower.apply failed: $e');
     }
 
     if (!_hasSecurePermission) return;
@@ -240,17 +216,14 @@ class _DisplayPageState extends State<DisplayPage>
         packCache: widget.packCache,
       );
     }
-    // Reapply policy (brightness / timeout / screen power) if any of the
-    // relevant fields actually changed. Crucially, screenOn toggling does
-    // NOT trigger a WebView rebuild — the reload-guard branch above only
-    // fires on content/contentRevision changes.
+    // Reapply policy (brightness / timeout) if any of the relevant fields
+    // actually changed. Screen power is driven imperatively via
+    // `screen_command` envelopes on the WS channel (M9.1), not via config.
     final brightnessChanged =
         oldWidget.config.brightness != widget.config.brightness;
     final timeoutChanged =
         oldWidget.config.screenTimeout != widget.config.screenTimeout;
-    final screenOnChanged =
-        oldWidget.config.screenOn != widget.config.screenOn;
-    if (brightnessChanged || timeoutChanged || screenOnChanged) {
+    if (brightnessChanged || timeoutChanged) {
       // ignore: discard_returned_future
       _applyPolicy(widget.config);
     }
@@ -319,7 +292,7 @@ class _DisplayPageState extends State<DisplayPage>
         body: Stack(
           children: [
             SizedBox.expand(child: _webView),
-            if (_screenPowerError)
+            if (widget.screenPowerError != null)
               Positioned(
                 top: 0,
                 left: 0,
@@ -330,8 +303,7 @@ class _DisplayPageState extends State<DisplayPage>
                     child: Padding(
                       padding: const EdgeInsets.all(12),
                       child: Text(
-                        'Screen-off requested but no capability — '
-                        'grant Device Admin or root in Settings',
+                        widget.screenPowerError ?? '',
                         style: TextStyle(
                           color:
                               Theme.of(context).colorScheme.onErrorContainer,

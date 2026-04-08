@@ -64,6 +64,69 @@ void main() {
     ws.disconnect();
   });
 
+  test('screen_command action:on invokes onScreenCommand(true)', () async {
+    final fake = _FakeChannel();
+    final calls = <bool>[];
+    final ws = WsClient(
+      baseUrl: 'http://server:8080',
+      channelFactory: (_) => fake,
+      onConfigUpdate: (_) {},
+      onScreenCommand: (on) => calls.add(on),
+    );
+    ws.connect();
+    fake.push(jsonEncode({'type': 'screen_command', 'action': 'on'}));
+    await Future<void>.delayed(Duration.zero);
+    expect(calls, <bool>[true]);
+    ws.disconnect();
+  });
+
+  test('screen_command action:off invokes onScreenCommand(false)', () async {
+    final fake = _FakeChannel();
+    final calls = <bool>[];
+    final ws = WsClient(
+      baseUrl: 'http://server:8080',
+      channelFactory: (_) => fake,
+      onConfigUpdate: (_) {},
+      onScreenCommand: (on) => calls.add(on),
+    );
+    ws.connect();
+    fake.push(jsonEncode({'type': 'screen_command', 'action': 'off'}));
+    await Future<void>.delayed(Duration.zero);
+    expect(calls, <bool>[false]);
+    ws.disconnect();
+  });
+
+  test('screen_command with unknown action is dropped', () async {
+    final fake = _FakeChannel();
+    final calls = <bool>[];
+    final ws = WsClient(
+      baseUrl: 'http://server:8080',
+      channelFactory: (_) => fake,
+      onConfigUpdate: (_) {},
+      onScreenCommand: (on) => calls.add(on),
+    );
+    ws.connect();
+    fake.push(jsonEncode({'type': 'screen_command', 'action': 'foo'}));
+    await Future<void>.delayed(Duration.zero);
+    expect(calls, isEmpty);
+    ws.disconnect();
+  });
+
+  test('screen_command without onScreenCommand set does not crash',
+      () async {
+    final fake = _FakeChannel();
+    final ws = WsClient(
+      baseUrl: 'http://server:8080',
+      channelFactory: (_) => fake,
+      onConfigUpdate: (_) {},
+    );
+    ws.connect();
+    fake.push(jsonEncode({'type': 'screen_command', 'action': 'on'}));
+    await Future<void>.delayed(Duration.zero);
+    // Reached here without throwing — sufficient.
+    ws.disconnect();
+  });
+
   test('unknown envelope types are ignored (forward-compat)', () async {
     final fake = _FakeChannel();
     var calls = 0;

@@ -11,13 +11,15 @@ import 'resource_pack/pack_cache.dart';
 import 'resource_pack/pack_manager.dart';
 import 'resource_pack/pack_manifest.dart';
 import 'resource_pack/wifi_guard.dart';
+import 'system/screen_power.dart';
 
 /// Signature for a function that builds a [WsClient] given a base URL and
-/// the callback to invoke on every `config_update`. Injectable so unit
-/// tests can substitute a fake client without opening a socket.
+/// the callbacks to invoke on live envelopes. Injectable so unit tests can
+/// substitute a fake client without opening a socket.
 typedef WsClientFactory = WsClient Function(
   String baseUrl,
   void Function(HyacinthConfig) onConfigUpdate,
+  void Function(bool on) onScreenCommand,
 );
 
 /// Signature for a function that builds a [PackManager] for a given
@@ -28,8 +30,13 @@ typedef PackManagerFactory = PackManager Function(String baseUrl);
 WsClient _defaultWsClientFactory(
   String baseUrl,
   void Function(HyacinthConfig) onConfigUpdate,
+  void Function(bool on) onScreenCommand,
 ) =>
-    WsClient(baseUrl: baseUrl, onConfigUpdate: onConfigUpdate);
+    WsClient(
+      baseUrl: baseUrl,
+      onConfigUpdate: onConfigUpdate,
+      onScreenCommand: onScreenCommand,
+    );
 
 /// Pulls a `<id>` out of `hyacinth://pack/<id>/...` URLs. Returns null
 /// for any other shape (regular `https://`, malformed, etc.).
@@ -69,6 +76,7 @@ class AppState extends ChangeNotifier {
     WsClientFactory? wsClientFactory,
     PackCache? packCache,
     PackManagerFactory? packManagerFactory,
+    ScreenPower? screenPower,
     Duration fallbackRetryInterval = const Duration(seconds: 10),
   })  : _store = store ?? ConfigStore(),
         _client = client ?? ConfigClient(),
@@ -76,6 +84,7 @@ class AppState extends ChangeNotifier {
         _wsClientFactory = wsClientFactory ?? _defaultWsClientFactory,
         _packCache = packCache ?? PackCache(),
         _packManagerFactory = packManagerFactory,
+        _screenPower = screenPower ?? ScreenPower(),
         _fallbackRetryInterval = fallbackRetryInterval;
 
   final ConfigStore _store;
@@ -84,6 +93,7 @@ class AppState extends ChangeNotifier {
   final WsClientFactory _wsClientFactory;
   final PackCache _packCache;
   final PackManagerFactory? _packManagerFactory;
+  final ScreenPower _screenPower;
   final Duration _fallbackRetryInterval;
   WsClient? _wsClient;
   PackManager? _packManager;
@@ -96,11 +106,16 @@ class AppState extends ChangeNotifier {
   HealthReport? _lastHealthReport;
   Timer? _fallbackTimer;
   bool _disposed = false;
+  String? _screenPowerError;
 
   AppPhase get phase => _phase;
   HyacinthConfig? get config => _config;
   String? get error => _error;
   HealthReport? get lastHealthReport => _lastHealthReport;
+
+  /// Most recent screen-power failure. `null` means the last call succeeded
+  /// (or no call has been made). Cleared on the next successful apply.
+  String? get screenPowerError => _screenPowerError;
 
   /// Entry point called by `main.dart` right after constructing the state.
   /// Reads the onboarding flag and dispatches to either the onboarding
@@ -307,10 +322,32 @@ class AppState extends ChangeNotifier {
 
   void _openWsClient(String baseUrl) {
     _closeWsClient();
-    final ws = _wsClientFactory(baseUrl, _applyConfig);
+    final ws = _wsClientFactory(baseUrl, _applyConfig, _handleScreenCommand);
     _wsClient = ws;
     ws.connect();
   }
+
+  Future<void> _handleScreenCommand(bool on) async {
+    try {
+      await _screenPower.apply(on);
+      if (_screenPowerError != null) {
+        _screenPowerError = null;
+        if (!_disposed) notifyListeners();
+      }
+    } on ScreenPowerUnavailable catch (e) {
+      _screenPowerError = e.toString();
+      if (!_disposed) notifyListeners();
+    } catch (e) {
+      _screenPowerError = 'Screen power failed: $e';
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  /// Test seam: drive `_handleScreenCommand` directly without an actual
+  /// WS frame.
+  @visibleForTesting
+  Future<void> debugHandleScreenCommand(bool on) =>
+      _handleScreenCommand(on);
 
   void _closeWsClient() {
     _wsClient?.disconnect();

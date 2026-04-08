@@ -63,11 +63,6 @@ type Config struct {
 	ContentRevision string          `json:"contentRevision"`
 	Brightness      json.RawMessage `json:"brightness"`
 	ScreenTimeout   json.RawMessage `json:"screenTimeout"`
-	// ScreenOn is the M9 remote screen-power toggle. `true` means the
-	// panel should be awake; `false` asks the client to drive a real
-	// screen-off via root or Device Admin. ScreenOn changes do NOT bump
-	// ContentRevision — this is orthogonal to the reload guard.
-	ScreenOn bool `json:"screenOn"`
 }
 
 // wsEnvelope is the wire shape for both directions over /ws. The `Config`
@@ -116,7 +111,6 @@ func newServer(dataDir string) *hyacinthServer {
 			ContentRevision: "2026-04-07T10:15:00Z",
 			Brightness:      json.RawMessage(`"auto"`),
 			ScreenTimeout:   json.RawMessage(`"always-on"`),
-			ScreenOn:        true,
 		},
 		conns:   make(map[*websocket.Conn]struct{}),
 		dataDir: dataDir,
@@ -452,6 +446,7 @@ func newMux() http.Handler {
 func newMuxFor(srv *hyacinthServer) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/config", srv.handleConfig)
+	mux.HandleFunc("/screen", srv.handleScreen)
 	mux.HandleFunc("/ws", srv.handleWS)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -461,6 +456,68 @@ func newMuxFor(srv *hyacinthServer) http.Handler {
 	mux.HandleFunc("/packs/", srv.handlePackByID)
 	mux.HandleFunc("/", srv.handleIndex)
 	return recoverMiddleware(srv.authMiddleware(mux))
+}
+
+// handleScreen accepts POST /screen with body `{"action":"on"|"off"}` and
+// broadcasts a `screen_command` envelope to every connected WS client.
+// The endpoint is imperative — it does NOT mutate `s.config`, so the next
+// config push will not re-flip the screen. M8 authMiddleware gates it on
+// POST automatically.
+func (s *hyacinthServer) handleScreen(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		writeError(w, http.StatusMethodNotAllowed,
+			"method_not_allowed", "method not allowed")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	var req struct {
+		Action string `json:"action"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		logError(r, "bad_request", err)
+		writeError(w, http.StatusBadRequest,
+			"bad_request", "invalid JSON: "+err.Error())
+		return
+	}
+	if req.Action != "on" && req.Action != "off" {
+		logError(r, "bad_request", errors.New("action must be on|off"))
+		writeError(w, http.StatusBadRequest,
+			"bad_request", "action must be \"on\" or \"off\"")
+		return
+	}
+	go s.broadcastScreenCommand(req.Action)
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"ok":true,"action":"` + req.Action + `"}`))
+}
+
+// broadcastScreenCommand sends a `screen_command` envelope to every WS
+// client. Failed writes drop the offending connection (same pattern as
+// broadcast()).
+func (s *hyacinthServer) broadcastScreenCommand(action string) {
+	payload, err := json.Marshal(struct {
+		Type   string `json:"type"`
+		Action string `json:"action"`
+	}{Type: "screen_command", Action: action})
+	if err != nil {
+		log.Printf("broadcast screen marshal: %v", err)
+		return
+	}
+	s.connsMu.Lock()
+	dead := make([]*websocket.Conn, 0)
+	for c := range s.conns {
+		_ = c.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+		if err := c.WriteMessage(websocket.TextMessage, payload); err != nil {
+			dead = append(dead, c)
+		}
+	}
+	for _, c := range dead {
+		delete(s.conns, c)
+		_ = c.Close()
+	}
+	s.connsMu.Unlock()
 }
 
 // handleIndex serves the inlined operator UI at GET /. Because "/" is a
@@ -719,9 +776,12 @@ const indexHTML = `<!DOCTYPE html>
         <md-slider id="brightness-slider" min="0" max="100" step="1" labeled value="50"></md-slider>
       </div>
     </div>
-    <div class="row between">
-      <label for="screen-on-switch" style="font-size:14px;" title="Requires root or Device Admin on the tablet">Display on</label>
-      <md-switch id="screen-on-switch" selected></md-switch>
+    <div>
+      <div class="row" style="gap: 8px;">
+        <md-filled-button id="screen-off-btn">Screen off</md-filled-button>
+        <md-filled-button id="screen-on-btn">Screen on</md-filled-button>
+      </div>
+      <p class="hint" style="font-size:12px;color:var(--md-sys-color-on-surface-variant);margin:4px 0 0 0;">Imperative — fires once and forgets. State isn't persisted.</p>
     </div>
     <md-outlined-select id="timeout-select" label="Screen Timeout">
       <md-select-option value="always-on"><div slot="headline">Always on</div></md-select-option>
@@ -780,7 +840,8 @@ const indexHTML = `<!DOCTYPE html>
   const slider       = $('brightness-slider');
   const timeoutSel   = $('timeout-select');
   const saveBtn      = $('save-btn');
-  const screenOnSwitch = $('screen-on-switch');
+  const screenOffBtn = $('screen-off-btn');
+  const screenOnBtn  = $('screen-on-btn');
   const connPill     = $('conn-pill');
   const connText     = $('conn-text');
   const wsStatus     = $('ws-status');
@@ -842,7 +903,6 @@ const indexHTML = `<!DOCTYPE html>
     timeoutSel.value = (typeof cfg.screenTimeout === 'string')
       ? cfg.screenTimeout
       : 'always-on';
-    screenOnSwitch.selected = cfg.screenOn !== false;
     dirty = false;
     staleBanner.classList.remove('show');
   }
@@ -853,7 +913,6 @@ const indexHTML = `<!DOCTYPE html>
       content: contentField.value,
       brightness,
       screenTimeout: timeoutSel.value || 'always-on',
-      screenOn: screenOnSwitch.selected,
     };
   }
 
@@ -865,7 +924,23 @@ const indexHTML = `<!DOCTYPE html>
     markDirty();
   });
   timeoutSel.addEventListener('change', markDirty);
-  screenOnSwitch.addEventListener('change', markDirty);
+
+  // ----- Imperative screen on/off (M9.1) -----
+  async function sendScreen(action) {
+    try {
+      const r = await fetch('/screen', {
+        method: 'POST',
+        headers: authHeaders({'Content-Type': 'application/json'}),
+        body: JSON.stringify({action}),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      toast('Screen ' + action + ' sent');
+    } catch (e) {
+      toast('Failed: ' + e.message, true);
+    }
+  }
+  screenOffBtn.addEventListener('click', () => sendScreen('off'));
+  screenOnBtn.addEventListener('click', () => sendScreen('on'));
 
   // ----- Toast -----
   let toastTimer = null;

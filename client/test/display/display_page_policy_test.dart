@@ -15,7 +15,6 @@ import 'package:hyacinth/config/config_model.dart';
 import 'package:hyacinth/display/display_page.dart';
 import 'package:hyacinth/display/webview_controller.dart';
 import 'package:hyacinth/system/brightness.dart';
-import 'package:hyacinth/system/screen_power.dart';
 import 'package:hyacinth/system/secure_settings.dart';
 
 class FakeWindowBrightness extends WindowBrightness {
@@ -38,27 +37,6 @@ class FakeWindowBrightness extends WindowBrightness {
   @override
   Future<void> reset() async {
     calls.add('reset');
-  }
-}
-
-class FakeScreenPower implements ScreenPower {
-  final List<bool> calls = <bool>[];
-  bool throwUnavailable = false;
-
-  @override
-  Future<bool> isInteractive() async => true;
-
-  @override
-  Future<bool> isAdminActive() async => true;
-
-  @override
-  Future<void> requestAdmin() async {}
-
-  @override
-  Future<String> apply(bool screenOn) async {
-    calls.add(screenOn);
-    if (throwUnavailable) throw const ScreenPowerUnavailable();
-    return 'admin';
   }
 }
 
@@ -132,7 +110,6 @@ void main() {
     required HyacinthConfig config,
     required FakeWindowBrightness wb,
     required FakeSecureSettings ss,
-    FakeScreenPower? sp,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -140,7 +117,6 @@ void main() {
           config: config,
           windowBrightness: wb,
           secureSettings: ss,
-          screenPower: sp ?? FakeScreenPower(),
         ),
       ),
     );
@@ -258,8 +234,7 @@ void main() {
       brightness: '20',
       screenTimeout: 'always-on',
     );
-    final sp = FakeScreenPower();
-    await mountAndSettle(tester, config: cfg, wb: wb, ss: ss, sp: sp);
+    await mountAndSettle(tester, config: cfg, wb: wb, ss: ss);
     wb.calls.clear();
     await tester.pumpWidget(
       MaterialApp(
@@ -267,7 +242,6 @@ void main() {
           config: cfg.copyWith(brightness: '80'),
           windowBrightness: wb,
           secureSettings: ss,
-          screenPower: sp,
         ),
       ),
     );

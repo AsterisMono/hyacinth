@@ -87,6 +87,26 @@ on your home Wi-Fi, you have two options:
    `<domain-config>` block entirely. This is the right answer for any
    tablet that ever leaves the house.
 
+## Screen on/off
+
+Hyacinth's operator UI has "Screen off" and "Screen on" buttons that
+fire imperative commands over the WebSocket. They are not persisted —
+the next config push will not re-flip the screen.
+
+The tablet acts on these commands using one of two paths:
+
+1. **Root** (preferred): `su -c "input keyevent 223"` for off, `224`
+   for on. Reliable. Works even after Doze kicks in.
+2. **Device Admin** (fallback): `DevicePolicyManager.lockNow()` for
+   off, a brief `FULL_WAKE_LOCK | ACQUIRE_CAUSES_WAKEUP` for on. The
+   wake path is best-effort: it works as long as the WS connection
+   survives. After ~10–30 minutes of sleep the system Doze policy
+   kills the TCP socket and "Screen on" can no longer reach the
+   device — only root's KEYCODE_WAKEUP wakes it from that state.
+
+If you need reliable wake from deep sleep on a non-rooted tablet,
+the realistic answer is to root it.
+
 ## End-to-end smoke checklist
 
 Run this after every fresh deploy. The tablet is referred to as `T`,

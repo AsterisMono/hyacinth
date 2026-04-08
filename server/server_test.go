@@ -27,7 +27,7 @@ func TestGetConfigReturnsJSON(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("body is not valid JSON: %v\nbody: %s", err, rr.Body.String())
 	}
-	for _, key := range []string{"content", "contentRevision", "brightness", "screenTimeout", "screenOn"} {
+	for _, key := range []string{"content", "contentRevision", "brightness", "screenTimeout"} {
 		if _, ok := payload[key]; !ok {
 			t.Errorf("missing key %q in /config payload", key)
 		}
@@ -294,139 +294,6 @@ func TestWebSocketPingPong(t *testing.T) {
 	}
 	if env.Type != "pong" {
 		t.Errorf("envelope type = %q, want pong", env.Type)
-	}
-}
-
-// M9 — screenOn round-trips through PUT/GET.
-func TestPutConfigRoundTripsScreenOn(t *testing.T) {
-	srv := newServer(t.TempDir())
-	mux := newMuxFor(srv)
-
-	// Default must be true from newServer.
-	{
-		rr := httptest.NewRecorder()
-		mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/config", nil))
-		var got Config
-		if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if !got.ScreenOn {
-			t.Errorf("default ScreenOn = false, want true")
-		}
-	}
-
-	// PUT screenOn: false.
-	body := `{"content":"https://example.com","brightness":"auto","screenTimeout":"always-on","screenOn":false}`
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	mux.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("put status = %d, body=%s", rr.Code, rr.Body.String())
-	}
-
-	rr = httptest.NewRecorder()
-	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/config", nil))
-	var got Config
-	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got.ScreenOn {
-		t.Errorf("after PUT screenOn=false, GET returned screenOn=true")
-	}
-
-	// PUT screenOn: true.
-	body = `{"content":"https://example.com","brightness":"auto","screenTimeout":"always-on","screenOn":true}`
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPut, "/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	mux.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("put2 status = %d", rr.Code)
-	}
-	rr = httptest.NewRecorder()
-	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/config", nil))
-	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode2: %v", err)
-	}
-	if !got.ScreenOn {
-		t.Errorf("after PUT screenOn=true, GET returned screenOn=false")
-	}
-}
-
-// M9 — flipping screenOn does NOT bump ContentRevision.
-func TestPutConfigScreenOnDoesNotBumpRevision(t *testing.T) {
-	srv := newServer(t.TempDir())
-	mux := newMuxFor(srv)
-	initial := srv.snapshot()
-
-	body := `{"content":"` + initial.Content + `","brightness":"auto","screenTimeout":"always-on","screenOn":false}`
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	mux.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
-	}
-	var got Config
-	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got.ContentRevision != initial.ContentRevision {
-		t.Errorf("ContentRevision = %q, want unchanged %q (screenOn flip must not bump)",
-			got.ContentRevision, initial.ContentRevision)
-	}
-	if got.ScreenOn {
-		t.Errorf("ScreenOn = true, want false after flip")
-	}
-}
-
-// M9 — WS broadcast carries screenOn.
-func TestPutConfigScreenOnBroadcast(t *testing.T) {
-	srv := newServer(t.TempDir())
-	ts := httptest.NewServer(newMuxFor(srv))
-	defer ts.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
-	deadline := time.Now().Add(5 * time.Second)
-	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("ws dial: %v", err)
-	}
-	defer c.Close()
-	_ = c.SetReadDeadline(deadline)
-	_ = c.SetWriteDeadline(deadline)
-
-	// Drain initial.
-	if _, _, err := c.ReadMessage(); err != nil {
-		t.Fatalf("drain: %v", err)
-	}
-
-	// PUT with screenOn=false.
-	body := `{"content":"https://example.com","brightness":"auto","screenTimeout":"always-on","screenOn":false}`
-	resp, err := http.DefaultClient.Do(mustNewRequest(t,
-		http.MethodPut, ts.URL+"/config", body))
-	if err != nil {
-		t.Fatalf("put: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("put status = %d", resp.StatusCode)
-	}
-
-	_, data, err := c.ReadMessage()
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	var env wsEnvelope
-	if err := json.Unmarshal(data, &env); err != nil {
-		t.Fatalf("envelope: %v", err)
-	}
-	if env.Config == nil {
-		t.Fatalf("envelope.Config nil")
-	}
-	if env.Config.ScreenOn {
-		t.Errorf("broadcast screenOn = true, want false")
 	}
 }
 

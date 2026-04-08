@@ -56,6 +56,7 @@ class WsClient {
   WsClient({
     required String baseUrl,
     required this.onConfigUpdate,
+    this.onScreenCommand,
     WsChannelFactory? channelFactory,
     Duration pingInterval = const Duration(seconds: 20),
     Duration idleTimeout = const Duration(seconds: 45),
@@ -73,6 +74,11 @@ class WsClient {
   final Uri _url;
   final WsChannelFactory _factory;
   final void Function(HyacinthConfig) onConfigUpdate;
+
+  /// M9.1 — fired when the server broadcasts a `screen_command` envelope.
+  /// The argument is `true` for `on`, `false` for `off`. Unknown actions
+  /// are dropped silently (forward-compat).
+  final void Function(bool on)? onScreenCommand;
   final Duration _pingInterval;
   final Duration _idleTimeout;
   final Duration _initialBackoff;
@@ -193,6 +199,18 @@ class WsClient {
           // the WS client.
         }
       }
+      return;
+    }
+    if (type == 'screen_command') {
+      final action = env['action'];
+      if (action is String) {
+        if (action == 'on') {
+          onScreenCommand?.call(true);
+        } else if (action == 'off') {
+          onScreenCommand?.call(false);
+        }
+      }
+      return;
     }
     // Unknown envelope types are ignored on purpose (forward compat per
     // plan.md L121).

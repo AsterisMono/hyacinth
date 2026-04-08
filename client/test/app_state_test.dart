@@ -135,11 +135,13 @@ class _GrantedPerms implements PermManager {
 WsClient _inertWsClient(
   String baseUrl,
   void Function(HyacinthConfig) onConfigUpdate,
+  void Function(bool on) onScreenCommand,
 ) {
   return WsClient(
     baseUrl: baseUrl,
     channelFactory: (_) => _NeverChannel(),
     onConfigUpdate: onConfigUpdate,
+    onScreenCommand: onScreenCommand,
   );
 }
 
@@ -165,6 +167,25 @@ class _AdminActiveScreenPower implements ScreenPower {
   Future<void> requestAdmin() async {}
   @override
   Future<String> apply(bool screenOn) async => 'admin';
+}
+
+/// Fake [ScreenPower] whose `apply` behavior is flipped by the test. Used
+/// to drive M9.1 `_handleScreenCommand` assertions.
+class _ProgrammableScreenPower implements ScreenPower {
+  bool throwUnavailable = false;
+  final List<bool> calls = <bool>[];
+  @override
+  Future<bool> isInteractive() async => true;
+  @override
+  Future<bool> isAdminActive() async => true;
+  @override
+  Future<void> requestAdmin() async {}
+  @override
+  Future<String> apply(bool screenOn) async {
+    calls.add(screenOn);
+    if (throwUnavailable) throw const ScreenPowerUnavailable();
+    return 'admin';
+  }
 }
 
 HealthCheck _makeHealthCheck({required bool pingOk}) {
@@ -199,6 +220,7 @@ void main() {
       client: _ThrowingConfigClient(),
       healthCheck: _makeHealthCheck(pingOk: true),
       wsClientFactory: _inertWsClient,
+      screenPower: _AdminActiveScreenPower(),
       fallbackRetryInterval: const Duration(hours: 1),
     );
     await state.start();
@@ -213,6 +235,7 @@ void main() {
       client: _OkConfigClient(),
       healthCheck: _makeHealthCheck(pingOk: true),
       wsClientFactory: _inertWsClient,
+      screenPower: _AdminActiveScreenPower(),
       fallbackRetryInterval: const Duration(hours: 1),
     );
     await state.start();
@@ -230,6 +253,7 @@ void main() {
       client: _OkConfigClient(),
       healthCheck: _makeHealthCheck(pingOk: true),
       wsClientFactory: _inertWsClient,
+      screenPower: _AdminActiveScreenPower(),
       fallbackRetryInterval: const Duration(hours: 1),
     );
     await state.start();
@@ -243,6 +267,7 @@ void main() {
       client: _OkConfigClient(),
       healthCheck: _makeHealthCheck(pingOk: false),
       wsClientFactory: _inertWsClient,
+      screenPower: _AdminActiveScreenPower(),
       fallbackRetryInterval: const Duration(hours: 1),
     );
     await state.start();
@@ -257,6 +282,7 @@ void main() {
       client: _ThrowingConfigClient(),
       healthCheck: _makeHealthCheck(pingOk: true),
       wsClientFactory: _inertWsClient,
+      screenPower: _AdminActiveScreenPower(),
       fallbackRetryInterval: const Duration(milliseconds: 30),
     );
     await state.start();
@@ -279,6 +305,7 @@ void main() {
       client: _OkConfigClient(),
       healthCheck: _makeHealthCheck(pingOk: true),
       wsClientFactory: _inertWsClient,
+      screenPower: _AdminActiveScreenPower(),
       fallbackRetryInterval: const Duration(hours: 1),
     );
     await state.completeOnboarding('http://server:8080');
@@ -311,6 +338,7 @@ void main() {
       client: _OkConfigClient(),
       healthCheck: hc,
       wsClientFactory: _inertWsClient,
+      screenPower: _AdminActiveScreenPower(),
       fallbackRetryInterval: const Duration(hours: 1),
     );
     await state.start();
@@ -329,7 +357,7 @@ void main() {
     late List<WsClient> created;
     WsClientFactory makeFactory() {
       created = <WsClient>[];
-      return (baseUrl, onConfigUpdate) {
+      return (baseUrl, onConfigUpdate, onScreenCommand) {
         // The WsClient takes a channelFactory; we hand it one that returns
         // a stream that never emits and a sink that swallows writes. The
         // AppState test doesn't need to drive the channel — it pokes
@@ -338,6 +366,7 @@ void main() {
           baseUrl: baseUrl,
           channelFactory: (_) => _NeverChannel(),
           onConfigUpdate: onConfigUpdate,
+          onScreenCommand: onScreenCommand,
         );
         created.add(ws);
         return ws;
@@ -350,6 +379,7 @@ void main() {
         client: _OkConfigClient(),
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: makeFactory(),
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -366,6 +396,7 @@ void main() {
         client: _OkConfigClient(),
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: makeFactory(),
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -393,6 +424,7 @@ void main() {
         client: _OkConfigClient(),
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: makeFactory(),
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -423,6 +455,7 @@ void main() {
         client: _OkConfigClient(),
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: makeFactory(),
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -442,6 +475,7 @@ void main() {
         client: _OkConfigClient(),
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: makeFactory(),
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -468,6 +502,7 @@ void main() {
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: _inertWsClient,
         packManagerFactory: (_) => fake,
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -487,6 +522,7 @@ void main() {
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: _inertWsClient,
         packManagerFactory: (_) => fake,
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -504,6 +540,7 @@ void main() {
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: _inertWsClient,
         packManagerFactory: (_) => fake,
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -522,6 +559,7 @@ void main() {
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: _inertWsClient,
         packManagerFactory: (_) => fake,
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -543,6 +581,7 @@ void main() {
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: _inertWsClient,
         packManagerFactory: (_) => fake,
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -564,15 +603,62 @@ void main() {
     });
   });
 
+  group('M9.1 screen_command handling', () {
+    test(
+        'debugHandleScreenCommand with ScreenPowerUnavailable sets error and '
+        'notifies', () async {
+      final sp = _ProgrammableScreenPower()..throwUnavailable = true;
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        screenPower: sp,
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      var fired = 0;
+      state.addListener(() => fired++);
+      await state.debugHandleScreenCommand(false);
+      expect(sp.calls, <bool>[false]);
+      expect(state.screenPowerError, isNotNull);
+      expect(state.screenPowerError, contains('capability'));
+      expect(fired, 1);
+      state.dispose();
+    });
+
+    test('successful apply clears a previously-set screenPowerError',
+        () async {
+      final sp = _ProgrammableScreenPower()..throwUnavailable = true;
+      final state = AppState(
+        store: ConfigStore(),
+        client: _OkConfigClient(),
+        healthCheck: _makeHealthCheck(pingOk: true),
+        wsClientFactory: _inertWsClient,
+        screenPower: sp,
+        fallbackRetryInterval: const Duration(hours: 1),
+      );
+      await state.start();
+      await state.debugHandleScreenCommand(false);
+      expect(state.screenPowerError, isNotNull);
+      sp.throwUnavailable = false;
+      await state.debugHandleScreenCommand(true);
+      expect(state.screenPowerError, isNull,
+          reason: 'a successful apply must clear the error');
+      state.dispose();
+    });
+  });
+
   group('M8.2 back gesture → MainActivity', () {
     late List<WsClient> created;
     WsClientFactory makeFactory() {
       created = <WsClient>[];
-      return (baseUrl, onConfigUpdate) {
+      return (baseUrl, onConfigUpdate, onScreenCommand) {
         final ws = WsClient(
           baseUrl: baseUrl,
           channelFactory: (_) => _NeverChannel(),
           onConfigUpdate: onConfigUpdate,
+          onScreenCommand: onScreenCommand,
         );
         created.add(ws);
         return ws;
@@ -587,6 +673,7 @@ void main() {
         client: _OkConfigClient(),
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: makeFactory(),
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -608,6 +695,7 @@ void main() {
         client: _ThrowingConfigClient(),
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: makeFactory(),
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -627,6 +715,7 @@ void main() {
         client: _OkConfigClient(),
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: makeFactory(),
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -647,6 +736,7 @@ void main() {
         client: _OkConfigClient(),
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: makeFactory(),
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -666,6 +756,7 @@ void main() {
         client: _ThrowingConfigClient(),
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: makeFactory(),
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -683,6 +774,7 @@ void main() {
         client: _OkConfigClient(),
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: makeFactory(),
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();
@@ -703,6 +795,7 @@ void main() {
         client: _OkConfigClient(),
         healthCheck: _makeHealthCheck(pingOk: true),
         wsClientFactory: makeFactory(),
+        screenPower: _AdminActiveScreenPower(),
         fallbackRetryInterval: const Duration(hours: 1),
       );
       await state.start();

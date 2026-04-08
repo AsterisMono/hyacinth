@@ -1,11 +1,9 @@
-// M9 — DisplayPage integration tests for the ScreenPower layer.
+// M9.1 — DisplayPage integration tests for the screenPowerError banner.
 //
-// Two invariants:
-//   1. Toggling `config.screenOn` MUST NOT rebuild the cached
-//      HyacinthWebView (same Element identity across the toggle), and
-//      the fake ScreenPower sees the apply() call.
-//   2. When ScreenPower.apply() throws ScreenPowerUnavailable, the
-//      DisplayPage renders an error banner over the WebView.
+// The screen-power apply path now lives in AppState; DisplayPage only
+// renders the latest error string (if any) as an errorContainer banner
+// over the WebView. The reload-guard invariant still matters: rebuilding
+// the page with a new screenPowerError MUST NOT remount the WebView.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,29 +11,7 @@ import 'package:hyacinth/config/config_model.dart';
 import 'package:hyacinth/display/display_page.dart';
 import 'package:hyacinth/display/webview_controller.dart';
 import 'package:hyacinth/system/brightness.dart';
-import 'package:hyacinth/system/screen_power.dart';
 import 'package:hyacinth/system/secure_settings.dart';
-
-class _FakeScreenPower implements ScreenPower {
-  final List<bool> calls = <bool>[];
-  bool throwUnavailable = false;
-
-  @override
-  Future<bool> isInteractive() async => true;
-
-  @override
-  Future<bool> isAdminActive() async => true;
-
-  @override
-  Future<void> requestAdmin() async {}
-
-  @override
-  Future<String> apply(bool screenOn) async {
-    calls.add(screenOn);
-    if (throwUnavailable) throw const ScreenPowerUnavailable();
-    return 'admin';
-  }
-}
 
 class _FakeWindowBrightness extends WindowBrightness {
   _FakeWindowBrightness() : super();
@@ -70,15 +46,13 @@ void main() {
   });
 
   testWidgets(
-      'screenOn toggle preserves WebView Element identity and triggers apply',
+      'screenPowerError change preserves WebView Element identity',
       (tester) async {
-    final sp = _FakeScreenPower();
     const cfg = HyacinthConfig(
       content: 'https://video.example/',
       contentRevision: 'r1',
       brightness: 'auto',
       screenTimeout: 'always-on',
-      screenOn: true,
     );
     await tester.pumpWidget(
       MaterialApp(
@@ -86,7 +60,6 @@ void main() {
           config: cfg,
           windowBrightness: _FakeWindowBrightness(),
           secureSettings: _FakeSecureSettings(),
-          screenPower: sp,
         ),
       ),
     );
@@ -94,19 +67,14 @@ void main() {
     final elementBefore = tester.element(find.byType(HyacinthWebView));
     final widgetBefore = elementBefore.widget;
 
-    // First apply (initial pump) passed `true`.
-    expect(sp.calls, isNotEmpty);
-    expect(sp.calls.last, isTrue);
-    final countAfterInit = sp.calls.length;
-
-    // Toggle screenOn → false.
+    // Flip screenPowerError on.
     await tester.pumpWidget(
       MaterialApp(
         home: DisplayPage(
-          config: cfg.copyWith(screenOn: false),
+          config: cfg,
+          screenPowerError: 'Something broke',
           windowBrightness: _FakeWindowBrightness(),
           secureSettings: _FakeSecureSettings(),
-          screenPower: sp,
         ),
       ),
     );
@@ -116,61 +84,57 @@ void main() {
     expect(
       identical(elementAfter, elementBefore),
       isTrue,
-      reason: 'screenOn toggle must NOT rebuild the cached HyacinthWebView',
+      reason: 'screenPowerError change must NOT rebuild the cached HyacinthWebView',
     );
     expect(
       identical(elementAfter.widget, widgetBefore),
       isTrue,
       reason: 'The cached HyacinthWebView widget instance must be reused.',
     );
-    expect(sp.calls.length, greaterThan(countAfterInit));
-    expect(sp.calls.last, isFalse);
+    expect(find.text('Something broke'), findsOneWidget);
 
-    // Toggle back → true.
-    await tester.pumpWidget(
-      MaterialApp(
-        home: DisplayPage(
-          config: cfg.copyWith(screenOn: true),
-          windowBrightness: _FakeWindowBrightness(),
-          secureSettings: _FakeSecureSettings(),
-          screenPower: sp,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    final elementThird = tester.element(find.byType(HyacinthWebView));
-    expect(identical(elementThird, elementBefore), isTrue);
-    expect(sp.calls.last, isTrue);
-  });
-
-  testWidgets(
-      'ScreenPowerUnavailable surfaces an error banner over the WebView',
-      (tester) async {
-    final sp = _FakeScreenPower()..throwUnavailable = true;
-    const cfg = HyacinthConfig(
-      content: 'https://video.example/',
-      contentRevision: 'r1',
-      brightness: 'auto',
-      screenTimeout: 'always-on',
-      screenOn: false,
-    );
+    // Clear it again.
     await tester.pumpWidget(
       MaterialApp(
         home: DisplayPage(
           config: cfg,
           windowBrightness: _FakeWindowBrightness(),
           secureSettings: _FakeSecureSettings(),
-          screenPower: sp,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final elementThird = tester.element(find.byType(HyacinthWebView));
+    expect(identical(elementThird, elementBefore), isTrue);
+    expect(find.text('Something broke'), findsNothing);
+  });
+
+  testWidgets(
+      'screenPowerError renders the error string verbatim over the WebView',
+      (tester) async {
+    const cfg = HyacinthConfig(
+      content: 'https://video.example/',
+      contentRevision: 'r1',
+      brightness: 'auto',
+      screenTimeout: 'always-on',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DisplayPage(
+          config: cfg,
+          screenPowerError:
+              'ScreenPower: no capability (need root or Device Admin)',
+          windowBrightness: _FakeWindowBrightness(),
+          secureSettings: _FakeSecureSettings(),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
     expect(
-      find.textContaining('Screen-off requested but no capability'),
+      find.textContaining('no capability'),
       findsOneWidget,
     );
-    // The WebView remains mounted — no cosmetic black overlay.
     expect(find.byType(HyacinthWebView), findsOneWidget);
   });
 }

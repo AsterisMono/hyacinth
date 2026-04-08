@@ -487,6 +487,149 @@ func TestRootIndexThroughWrappedChain(t *testing.T) {
 	}
 }
 
+// --- M9.1: POST /screen imperative commands ----------------------------------------
+
+// readScreenEnvelope drains frames until a screen_command envelope arrives
+// or the deadline elapses. Skips any config_update broadcasts that race in.
+func readScreenEnvelope(t *testing.T, c *websocket.Conn) map[string]any {
+	t.Helper()
+	for i := 0; i < 5; i++ {
+		_, data, err := c.ReadMessage()
+		if err != nil {
+			t.Fatalf("read ws: %v", err)
+		}
+		var env map[string]any
+		if err := json.Unmarshal(data, &env); err != nil {
+			t.Fatalf("decode envelope: %v", err)
+		}
+		if env["type"] == "screen_command" {
+			return env
+		}
+	}
+	t.Fatalf("no screen_command envelope after 5 frames")
+	return nil
+}
+
+func TestPostScreenBroadcastsOn(t *testing.T) {
+	srv := newServer(t.TempDir())
+	ts := httptest.NewServer(newMuxFor(srv))
+	defer ts.Close()
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("ws dial: %v", err)
+	}
+	defer c.Close()
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	// Drain the initial config_update.
+	if _, _, err := c.ReadMessage(); err != nil {
+		t.Fatalf("drain initial: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/screen",
+		strings.NewReader(`{"action":"on"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d, want 200", resp.StatusCode)
+	}
+	env := readScreenEnvelope(t, c)
+	if env["action"] != "on" {
+		t.Errorf("action=%v, want on", env["action"])
+	}
+}
+
+func TestPostScreenBroadcastsOff(t *testing.T) {
+	srv := newServer(t.TempDir())
+	ts := httptest.NewServer(newMuxFor(srv))
+	defer ts.Close()
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("ws dial: %v", err)
+	}
+	defer c.Close()
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, _, err := c.ReadMessage(); err != nil {
+		t.Fatalf("drain initial: %v", err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/screen",
+		strings.NewReader(`{"action":"off"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d, want 200", resp.StatusCode)
+	}
+	env := readScreenEnvelope(t, c)
+	if env["action"] != "off" {
+		t.Errorf("action=%v, want off", env["action"])
+	}
+}
+
+func TestPostScreenInvalidAction(t *testing.T) {
+	mux := newMux()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/screen",
+		strings.NewReader(`{"action":"foo"}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400", rr.Code)
+	}
+	if eb := decodeErr(t, rr.Body.Bytes()); eb.Error != "bad_request" {
+		t.Errorf("error code=%q", eb.Error)
+	}
+}
+
+func TestPostScreenWrongMethod(t *testing.T) {
+	mux := newMux()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/screen", nil)
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status=%d, want 405", rr.Code)
+	}
+	if eb := decodeErr(t, rr.Body.Bytes()); eb.Error != "method_not_allowed" {
+		t.Errorf("error code=%q", eb.Error)
+	}
+}
+
+func TestPostScreenAuthRequired(t *testing.T) {
+	_, mux := authedSrv(t, "secret")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/screen",
+		strings.NewReader(`{"action":"on"}`))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want 401", rr.Code)
+	}
+	if eb := decodeErr(t, rr.Body.Bytes()); eb.Error != "unauthorized" {
+		t.Errorf("error code=%q", eb.Error)
+	}
+}
+
+func TestPostScreenWithAuthAccepted(t *testing.T) {
+	_, mux := authedSrv(t, "secret")
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/screen",
+		strings.NewReader(`{"action":"on"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer secret")
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 // Sanity that io.Discard exists in the build (silences unused-import noise
 // if some import gets added below this line later). Trivial test, kept
 // here so the file's import block doesn't have to be touched again.

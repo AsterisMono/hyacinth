@@ -244,6 +244,32 @@ class MainActivity : FlutterActivity() {
                             // Tier 2: device admin.
                             if (dpm.isAdminActive(adminComponent)) {
                                 if (on) {
+                                    // The activity is paused after
+                                    // lockNow() — `requestDismissKeyguard`
+                                    // alone does NOT power the panel back
+                                    // on. Acquire a brief wake lock with
+                                    // ACQUIRE_CAUSES_WAKEUP first. These
+                                    // wake-lock flags are deprecated since
+                                    // API 17 but remain the only
+                                    // sandboxed-app way to wake the panel
+                                    // from a paused activity. The keyguard
+                                    // call afterwards still matters
+                                    // because the system may show the
+                                    // lock screen on top of the woken
+                                    // display.
+                                    @Suppress("DEPRECATION")
+                                    val wakeLock = pm.newWakeLock(
+                                        PowerManager.FULL_WAKE_LOCK or
+                                            PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                                            PowerManager.ON_AFTER_RELEASE,
+                                        "Hyacinth:wake",
+                                    )
+                                    wakeLock.acquire(3_000)
+                                    // Don't release immediately — let it
+                                    // run its 3s timeout so the panel
+                                    // actually stays on. Releasing right
+                                    // away can cancel the wake on some
+                                    // OEM kernels.
                                     val kg = getSystemService(Context.KEYGUARD_SERVICE)
                                         as KeyguardManager
                                     kg.requestDismissKeyguard(this, null)

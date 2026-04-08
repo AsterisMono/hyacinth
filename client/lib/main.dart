@@ -131,6 +131,7 @@ class _HyacinthAppState extends State<HyacinthApp> with WidgetsBindingObserver {
                     config: _appState.config!,
                     packCache: _appState.packCache,
                     onBackRequested: _appState.requestMainActivity,
+                    screenPowerError: _appState.screenPowerError,
                   );
               }
             },
